@@ -90,7 +90,7 @@ Optional:
 2. Download this project into a folder, for example `~/lookout`. Use the green **Code** button on this page and choose **Download ZIP**, or clone it with git:
 
    ```bash
-   git clone https://github.com/tonyispht/signalopsirl.git ~/lookout
+   git clone https://github.com/tonyispht/SignalOpsIRL.git ~/lookout
    ```
 
 3. Create a Python environment and install the libraries:
