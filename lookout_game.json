@@ -1,0 +1,3926 @@
+{
+  "_readme": [
+    "Edit this file while the scanner runs; it reloads itself within ~5 seconds. Bad entries are skipped with a warning.",
+    "Check your edits with:  python3 scanner.py --check-game   (also lists every metric and bounty match key you can use).",
+    "Every quest/bounty/achievement/title needs a unique lowercase 'id' (a-z 0-9 _ -). Progress is saved by id, so renaming an id resets it.",
+    "Quests count TODAY only; achievements and title metrics count LIFETIME. Bounties watch for devices that match their 'match' rule.",
+    "Bounty match keys (all must match): category, tier (alert/possible/known/none), addr_type, vendor/name/label (regex), uuid, mfg (company id), min_rssi, followed.",
+    "Title unlock types: always, level, achievement, bounty, quest, metric.",
+    "INTEL COINS: earned by quests, bounties, achievements, level-ups, streaks, tactical finds, hunts and scan time; spent in the Coin Exchange (key e).",
+    "coin_rules / coin_caps set what each event pays and its daily cap (null removes a cap). Quests, bounties and achievements may add their own \"coins\": N; otherwise they pay from XP (settings.quest_xp_per_coin etc.) or bounty_<difficulty>.",
+    "shop: an entry with a known id edits that item (name, description, price, min_level, hidden, enabled:false). A new id adds a theme (spec: mode mono/duo/cycle + #rrggbb colors) or glitch (spec: kinds tear/split/corrupt/flash, level 1-3).",
+    "DAILY HOOKS: the \"retention\" block controls Daily Surge (bonus XP in your first minutes of scanning each day), Streak Shields, the streak coin ladder, Daily Caches (loot boxes for finishing quests), Weekly Ops + Weekly Chest and the Welcome Back bonus.",
+    "Weekly ops use counter metrics only (devices_seen, scan_minutes, active_days, quests_completed ...): progress is how much the counter grows during the week. Check edits with python3 scanner.py --check-game."
+  ],
+  "settings": {
+    "daily_quest_count": 10,
+    "day_rollover_hour": 0,
+    "level_cap": 100,
+    "level_base_xp": 100,
+    "level_growth": 1.045,
+    "streak_min_scan_minutes": 10,
+    "streak_bonus_xp": 10,
+    "streak_bonus_cap": 7,
+    "quest_xp_per_coin": 15,
+    "achievement_xp_per_coin": 20,
+    "streak_xp_per_coin": 30,
+    "devices_per_coin": 50,
+    "coin_icon": "🪙",
+    "level_xp_multiplier": 3.0,
+    "achievement_target_multiplier": 1.0,
+    "bounty_count_multiplier": 1.0
+  },
+  "xp_rules": {
+    "new_device": 1,
+    "new_category": 25,
+    "new_vendor": 5,
+    "alert_device": 40,
+    "possible_device": 15,
+    "follower_alert": 50,
+    "hunt_completed": 60,
+    "rotation_linked": 3,
+    "scan_minute": 1,
+    "daily_login": 15
+  },
+  "xp_caps": {
+    "new_device": 15150,
+    "follower_alert": 15150,
+    "hunt_completed": 15300,
+    "rotation_linked": 1560,
+    "scan_minute": 15180
+  },
+  "ranks": [
+    {
+      "level": 1,
+      "name": "Static"
+    },
+    {
+      "level": 5,
+      "name": "Listener"
+    },
+    {
+      "level": 10,
+      "name": "Scout"
+    },
+    {
+      "level": 15,
+      "name": "Surveyor"
+    },
+    {
+      "level": 20,
+      "name": "Analyst"
+    },
+    {
+      "level": 30,
+      "name": "Specialist"
+    },
+    {
+      "level": 40,
+      "name": "Veteran"
+    },
+    {
+      "level": 50,
+      "name": "Master"
+    },
+    {
+      "level": 70,
+      "name": "Grandmaster"
+    },
+    {
+      "level": 90,
+      "name": "Legend"
+    }
+  ],
+  "quests": [
+    {
+      "id": "sweep-small",
+      "name": "Quick Sweep",
+      "description": "Discover new devices around you.",
+      "metric": "devices_seen",
+      "target": 25,
+      "xp": 40
+    },
+    {
+      "id": "sweep-medium",
+      "name": "Area Survey",
+      "description": "Discover a good crowd of new devices.",
+      "metric": "devices_seen",
+      "target": 60,
+      "xp": 80
+    },
+    {
+      "id": "sweep-large",
+      "name": "Wide Net",
+      "description": "Discover a large number of new devices.",
+      "metric": "devices_seen",
+      "target": 120,
+      "xp": 150,
+      "min_level": 5
+    },
+    {
+      "id": "variety-4",
+      "name": "Variety Pack",
+      "description": "See devices from 4 different categories.",
+      "metric": "distinct_categories",
+      "target": 4,
+      "xp": 50
+    },
+    {
+      "id": "variety-7",
+      "name": "Full Spectrum",
+      "description": "See devices from 7 different categories.",
+      "metric": "distinct_categories",
+      "target": 7,
+      "xp": 110,
+      "min_level": 4
+    },
+    {
+      "id": "vendors-6",
+      "name": "Brand Spotter",
+      "description": "See devices from 6 different vendors.",
+      "metric": "distinct_vendors",
+      "target": 6,
+      "xp": 50
+    },
+    {
+      "id": "vendors-12",
+      "name": "Brand Collector",
+      "description": "See devices from 12 different vendors.",
+      "metric": "distinct_vendors",
+      "target": 12,
+      "xp": 100,
+      "min_level": 4
+    },
+    {
+      "id": "scan-15",
+      "name": "Keep Watch",
+      "description": "Scan for 15 minutes today.",
+      "metric": "scan_minutes",
+      "target": 15,
+      "xp": 40
+    },
+    {
+      "id": "scan-45",
+      "name": "Long Watch",
+      "description": "Scan for 45 minutes today.",
+      "metric": "scan_minutes",
+      "target": 45,
+      "xp": 100,
+      "min_level": 3
+    },
+    {
+      "id": "crowd-20",
+      "name": "Busy Airwaves",
+      "description": "Have 20 devices in range at once.",
+      "metric": "max_in_range",
+      "target": 20,
+      "xp": 60
+    },
+    {
+      "id": "crowd-50",
+      "name": "Packed House",
+      "description": "Have 50 devices in range at once.",
+      "metric": "max_in_range",
+      "target": 50,
+      "xp": 130,
+      "min_level": 6
+    },
+    {
+      "id": "homebody",
+      "name": "Smart Home Census",
+      "description": "Find 5 smart home / IoT devices.",
+      "metric": "category:smart_iot",
+      "target": 5,
+      "xp": 60
+    },
+    {
+      "id": "wearables",
+      "name": "Wrist Check",
+      "description": "Find 5 wearables or audio devices.",
+      "metric": "category:wearables_audio",
+      "target": 5,
+      "xp": 60
+    },
+    {
+      "id": "phones",
+      "name": "Phone Census",
+      "description": "Find 8 smartphones.",
+      "metric": "category:smartphones",
+      "target": 8,
+      "xp": 60
+    },
+    {
+      "id": "tag-finder",
+      "name": "Tag Finder",
+      "description": "Find 2 trackers or tagged valuables.",
+      "metric": "category:trackers_valuables",
+      "target": 2,
+      "xp": 80
+    },
+    {
+      "id": "hunter",
+      "name": "Marco Polo",
+      "description": "Finish a hunt by walking up to the target.",
+      "metric": "hunts_completed",
+      "target": 1,
+      "xp": 90,
+      "min_level": 2
+    },
+    {
+      "id": "ghost-links",
+      "name": "Ghost Linker",
+      "description": "Link 3 rotating addresses back to one device.",
+      "metric": "rotations_linked",
+      "target": 3,
+      "xp": 70,
+      "min_level": 3
+    },
+    {
+      "id": "namer",
+      "name": "Name Giver",
+      "description": "Give a device a permanent name.",
+      "metric": "devices_renamed",
+      "target": 1,
+      "xp": 30
+    },
+    {
+      "id": "packets-5k",
+      "name": "Data Haul",
+      "description": "Receive 5,000 advertisement packets.",
+      "metric": "packets",
+      "target": 5000,
+      "xp": 50
+    },
+    {
+      "id": "flagged",
+      "name": "Heads Up",
+      "description": "Have the scanner flag an ALERT device.",
+      "metric": "alerts_found",
+      "target": 1,
+      "xp": 120,
+      "min_level": 4,
+      "weight": 0.5
+    },
+    {
+      "id": "sweep-tiny",
+      "name": "Warm-Up",
+      "description": "Discover 10 new devices.",
+      "metric": "devices_seen",
+      "target": 10,
+      "xp": 20
+    },
+    {
+      "id": "sweep-xl",
+      "name": "Dragnet",
+      "description": "Discover 200 new devices.",
+      "metric": "devices_seen",
+      "target": 200,
+      "xp": 230,
+      "min_level": 8
+    },
+    {
+      "id": "sweep-xxl",
+      "name": "Signal Flood",
+      "description": "Discover 350 new devices.",
+      "metric": "devices_seen",
+      "target": 350,
+      "xp": 380,
+      "min_level": 12,
+      "weight": 0.6
+    },
+    {
+      "id": "variety-3",
+      "name": "Mixed Bag",
+      "description": "See devices from 3 different categories.",
+      "metric": "distinct_categories",
+      "target": 3,
+      "xp": 30
+    },
+    {
+      "id": "variety-10",
+      "name": "Spectrum Master",
+      "description": "See devices from 10 different categories.",
+      "metric": "distinct_categories",
+      "target": 10,
+      "xp": 180,
+      "min_level": 8,
+      "weight": 0.7
+    },
+    {
+      "id": "vendors-3",
+      "name": "Name Dropper",
+      "description": "See devices from 3 different vendors.",
+      "metric": "distinct_vendors",
+      "target": 3,
+      "xp": 25
+    },
+    {
+      "id": "vendors-20",
+      "name": "Brand Archivist",
+      "description": "See devices from 20 different vendors.",
+      "metric": "distinct_vendors",
+      "target": 20,
+      "xp": 170,
+      "min_level": 8,
+      "weight": 0.7
+    },
+    {
+      "id": "scan-5",
+      "name": "Quick Look",
+      "description": "Scan for 5 minutes today.",
+      "metric": "scan_minutes",
+      "target": 5,
+      "xp": 20
+    },
+    {
+      "id": "scan-30",
+      "name": "Steady Watch",
+      "description": "Scan for 30 minutes today.",
+      "metric": "scan_minutes",
+      "target": 30,
+      "xp": 70,
+      "min_level": 2
+    },
+    {
+      "id": "scan-90",
+      "name": "Night Shift",
+      "description": "Scan for 90 minutes today.",
+      "metric": "scan_minutes",
+      "target": 90,
+      "xp": 180,
+      "min_level": 6,
+      "weight": 0.8
+    },
+    {
+      "id": "scan-120",
+      "name": "Marathon",
+      "description": "Scan for 2 hours today.",
+      "metric": "scan_minutes",
+      "target": 120,
+      "xp": 260,
+      "min_level": 10,
+      "weight": 0.6
+    },
+    {
+      "id": "packets-1k",
+      "name": "Warm Antenna",
+      "description": "Receive 1,000 advertisement packets.",
+      "metric": "packets",
+      "target": 1000,
+      "xp": 25
+    },
+    {
+      "id": "packets-15k",
+      "name": "Firehose",
+      "description": "Receive 15,000 advertisement packets.",
+      "metric": "packets",
+      "target": 15000,
+      "xp": 110,
+      "min_level": 4
+    },
+    {
+      "id": "packets-40k",
+      "name": "Data Deluge",
+      "description": "Receive 40,000 advertisement packets.",
+      "metric": "packets",
+      "target": 40000,
+      "xp": 220,
+      "min_level": 9,
+      "weight": 0.7
+    },
+    {
+      "id": "crowd-10",
+      "name": "Getting Busy",
+      "description": "Have 10 devices in range at once.",
+      "metric": "max_in_range",
+      "target": 10,
+      "xp": 35
+    },
+    {
+      "id": "crowd-35",
+      "name": "Crowded Room",
+      "description": "Have 35 devices in range at once.",
+      "metric": "max_in_range",
+      "target": 35,
+      "xp": 90,
+      "min_level": 3
+    },
+    {
+      "id": "crowd-80",
+      "name": "Stadium Mode",
+      "description": "Have 80 devices in range at once.",
+      "metric": "max_in_range",
+      "target": 80,
+      "xp": 200,
+      "min_level": 10,
+      "weight": 0.6
+    },
+    {
+      "id": "laptops-3",
+      "name": "Laptop Lookout",
+      "description": "Find 3 laptops or tablets.",
+      "metric": "category:laptops_tablets",
+      "target": 3,
+      "xp": 50
+    },
+    {
+      "id": "gaming-2",
+      "name": "Player Two",
+      "description": "Find 2 handhelds, consoles or controllers.",
+      "metric": "category:handhelds_gaming",
+      "target": 2,
+      "xp": 70,
+      "min_level": 2
+    },
+    {
+      "id": "net-3",
+      "name": "Network Sniffer",
+      "description": "Find 3 networking or mesh devices.",
+      "metric": "category:networking_mesh",
+      "target": 3,
+      "xp": 70,
+      "min_level": 2
+    },
+    {
+      "id": "auto-2",
+      "name": "Road Watch",
+      "description": "Find 2 vehicles or aerial devices.",
+      "metric": "category:auto_aerial",
+      "target": 2,
+      "xp": 80,
+      "min_level": 2
+    },
+    {
+      "id": "medical-1",
+      "name": "Vitals Check",
+      "description": "Find a medical or health device.",
+      "metric": "category:medical_health",
+      "target": 1,
+      "xp": 80,
+      "min_level": 3,
+      "weight": 0.7
+    },
+    {
+      "id": "fitness-2",
+      "name": "Gym Rat",
+      "description": "Find 2 fitness or gym devices.",
+      "metric": "category:fitness_gym",
+      "target": 2,
+      "xp": 70,
+      "min_level": 2,
+      "weight": 0.8
+    },
+    {
+      "id": "pet-1",
+      "name": "Pet Patrol",
+      "description": "Find a pet tracker.",
+      "metric": "category:pet_trackers",
+      "target": 1,
+      "xp": 80,
+      "min_level": 3,
+      "weight": 0.6
+    },
+    {
+      "id": "tv-3",
+      "name": "Living Room Sweep",
+      "description": "Find 3 TV, streaming or home audio devices.",
+      "metric": "category:home_entertainment_av",
+      "target": 3,
+      "xp": 70,
+      "min_level": 2
+    },
+    {
+      "id": "appliance-2",
+      "name": "Kitchen Crew",
+      "description": "Find 2 smart appliances.",
+      "metric": "category:smart_appliances",
+      "target": 2,
+      "xp": 70,
+      "min_level": 2,
+      "weight": 0.8
+    },
+    {
+      "id": "ev-1",
+      "name": "Wheels and Watts",
+      "description": "Find an EV, e-bike or scooter device.",
+      "metric": "category:ev_micromobility",
+      "target": 1,
+      "xp": 90,
+      "min_level": 3,
+      "weight": 0.6
+    },
+    {
+      "id": "camera-1",
+      "name": "Say Cheese",
+      "description": "Find a camera or photo/video device.",
+      "metric": "category:cameras_photo_video_production",
+      "target": 1,
+      "xp": 90,
+      "min_level": 3,
+      "weight": 0.6
+    },
+    {
+      "id": "industrial-2",
+      "name": "Shop Floor",
+      "description": "Find 2 industrial or logistics devices.",
+      "metric": "category:industrial_logistics",
+      "target": 2,
+      "xp": 90,
+      "min_level": 3,
+      "weight": 0.6
+    },
+    {
+      "id": "maker-1",
+      "name": "Maker Spotted",
+      "description": "Find a 3D printer, laser or craft device.",
+      "metric": "category:makers_3d_printing_craft",
+      "target": 1,
+      "xp": 90,
+      "min_level": 3,
+      "weight": 0.5
+    },
+    {
+      "id": "hacker-1",
+      "name": "Gadget Hunter",
+      "description": "Find a hacker or pentest gadget (ESP32 board, Flipper...).",
+      "metric": "category:hacker_pentest",
+      "target": 1,
+      "xp": 110,
+      "min_level": 4,
+      "weight": 0.6
+    },
+    {
+      "id": "hacker-3",
+      "name": "Toolbox Raid",
+      "description": "Find 3 hacker or pentest gadgets.",
+      "metric": "category:hacker_pentest",
+      "target": 3,
+      "xp": 220,
+      "min_level": 8,
+      "weight": 0.4
+    },
+    {
+      "id": "handheld-pc-1",
+      "name": "Pocket Computer",
+      "description": "Find a handheld PC (GPD Pocket, uConsole, UMPC...).",
+      "metric": "category:handheld_computers_umpc",
+      "target": 1,
+      "xp": 120,
+      "min_level": 4,
+      "weight": 0.4
+    },
+    {
+      "id": "smart-12",
+      "name": "Smart Home Deep Dive",
+      "description": "Find 12 smart home / IoT devices.",
+      "metric": "category:smart_iot",
+      "target": 12,
+      "xp": 130,
+      "min_level": 4
+    },
+    {
+      "id": "wear-12",
+      "name": "Audio Crowd",
+      "description": "Find 12 wearables or audio devices.",
+      "metric": "category:wearables_audio",
+      "target": 12,
+      "xp": 130,
+      "min_level": 4
+    },
+    {
+      "id": "phones-20",
+      "name": "Phone Farm",
+      "description": "Find 20 smartphones.",
+      "metric": "category:smartphones",
+      "target": 20,
+      "xp": 150,
+      "min_level": 5
+    },
+    {
+      "id": "tags-4",
+      "name": "Lost and Found",
+      "description": "Find 4 trackers or tagged valuables.",
+      "metric": "category:trackers_valuables",
+      "target": 4,
+      "xp": 160,
+      "min_level": 5,
+      "weight": 0.7
+    },
+    {
+      "id": "possible-1",
+      "name": "Second Look",
+      "description": "Have the scanner flag a POSSIBLE device.",
+      "metric": "possibles_found",
+      "target": 1,
+      "xp": 70,
+      "min_level": 3,
+      "weight": 0.6
+    },
+    {
+      "id": "possible-3",
+      "name": "Suspicious Minds",
+      "description": "Have the scanner flag 3 POSSIBLE devices.",
+      "metric": "possibles_found",
+      "target": 3,
+      "xp": 150,
+      "min_level": 6,
+      "weight": 0.35
+    },
+    {
+      "id": "alert-3",
+      "name": "Red Flags",
+      "description": "Have the scanner flag 3 ALERT devices.",
+      "metric": "alerts_found",
+      "target": 3,
+      "xp": 240,
+      "min_level": 8,
+      "weight": 0.25
+    },
+    {
+      "id": "public-5",
+      "name": "Honest Addresses",
+      "description": "Find 5 devices using a public address.",
+      "metric": "addr:public",
+      "target": 5,
+      "xp": 40
+    },
+    {
+      "id": "random-15",
+      "name": "Private Eyes",
+      "description": "Find 15 devices using a private (rotating) address.",
+      "metric": "addr:private-resolvable",
+      "target": 15,
+      "xp": 60
+    },
+    {
+      "id": "ghost-1",
+      "name": "First Ghost",
+      "description": "Link a rotating address back to one device.",
+      "metric": "rotations_linked",
+      "target": 1,
+      "xp": 40,
+      "min_level": 2
+    },
+    {
+      "id": "ghost-8",
+      "name": "Ghost Whisperer",
+      "description": "Link 8 rotating addresses back to their devices.",
+      "metric": "rotations_linked",
+      "target": 8,
+      "xp": 150,
+      "min_level": 6
+    },
+    {
+      "id": "hunt-start",
+      "name": "Tracking Practice",
+      "description": "Start a hunt.",
+      "metric": "hunts_started",
+      "target": 1,
+      "xp": 30,
+      "min_level": 2
+    },
+    {
+      "id": "hunt-2",
+      "name": "Double Hunt",
+      "description": "Finish 2 hunts.",
+      "metric": "hunts_completed",
+      "target": 2,
+      "xp": 200,
+      "min_level": 6,
+      "weight": 0.5
+    },
+    {
+      "id": "follower-1",
+      "name": "Tail Spotter",
+      "description": "Have Follower Watch flag a tracker.",
+      "metric": "followers_flagged",
+      "target": 1,
+      "xp": 120,
+      "min_level": 4,
+      "weight": 0.4
+    },
+    {
+      "id": "namer-3",
+      "name": "Cataloguer",
+      "description": "Give 3 devices a permanent name.",
+      "metric": "devices_renamed",
+      "target": 3,
+      "xp": 80,
+      "min_level": 3,
+      "weight": 0.7
+    },
+    {
+      "id": "bounty-1",
+      "name": "Bounty Hunter",
+      "description": "Claim a bounty.",
+      "metric": "bounties_claimed",
+      "target": 1,
+      "xp": 100,
+      "min_level": 3,
+      "weight": 0.6
+    },
+    {
+      "id": "second-wind",
+      "name": "Second Wind",
+      "description": "Start a second scanner session today.",
+      "metric": "sessions",
+      "target": 2,
+      "xp": 25,
+      "weight": 0.5
+    },
+    {
+      "id": "woods-1",
+      "name": "Into the Woods",
+      "description": "Find a hunting, trail cam or woods device.",
+      "metric": "category:hunting_trail_woods",
+      "target": 1,
+      "xp": 80,
+      "min_level": 3,
+      "weight": 0.6
+    },
+    {
+      "id": "woods-3",
+      "name": "Camo Sweep",
+      "description": "Find 3 hunting or trail devices.",
+      "metric": "category:hunting_trail_woods",
+      "target": 3,
+      "xp": 140,
+      "min_level": 6,
+      "weight": 0.4
+    },
+    {
+      "id": "woods-6",
+      "name": "Backcountry Survey",
+      "description": "Find 6 hunting, trail cam or woods devices.",
+      "metric": "category:hunting_trail_woods",
+      "target": 6,
+      "xp": 260,
+      "min_level": 10,
+      "weight": 0.25
+    },
+    {
+      "id": "leo-1",
+      "name": "Eyes on Blue",
+      "description": "Spot law enforcement or tactical gear.",
+      "metric": "tier:alert",
+      "target": 1,
+      "xp": 150,
+      "min_level": 5,
+      "weight": 0.3
+    },
+    {
+      "id": "leo-maybe",
+      "name": "Maybe Blue",
+      "description": "Find a possible law enforcement device.",
+      "metric": "tier:possible",
+      "target": 1,
+      "xp": 90,
+      "min_level": 4,
+      "weight": 0.4
+    },
+    {
+      "id": "ems-1",
+      "name": "First Responders",
+      "description": "Spot EMS, fire or rescue gear.",
+      "metric": "category:ems_ambulance_fire_rescue",
+      "target": 1,
+      "xp": 120,
+      "min_level": 4,
+      "weight": 0.35
+    },
+    {
+      "id": "skim-1",
+      "name": "Pump Check",
+      "description": "Find a possible card skimmer device.",
+      "metric": "category:card_skimmer_suspects",
+      "target": 1,
+      "xp": 150,
+      "min_level": 5,
+      "weight": 0.25
+    },
+    {
+      "id": "pos-3",
+      "name": "Checkout Lane",
+      "description": "Find 3 point-of-sale or retail devices.",
+      "metric": "category:commercial_pos_retail",
+      "target": 3,
+      "xp": 70,
+      "min_level": 2
+    },
+    {
+      "id": "sec-2",
+      "name": "Locked Down",
+      "description": "Find 2 security or access control devices.",
+      "metric": "category:security_access_control",
+      "target": 2,
+      "xp": 100,
+      "min_level": 4,
+      "weight": 0.7
+    },
+    {
+      "id": "key-1",
+      "name": "Key Check",
+      "description": "Find a hardware wallet or security key.",
+      "metric": "category:crypto_security_keys",
+      "target": 1,
+      "xp": 100,
+      "min_level": 4,
+      "weight": 0.5
+    },
+    {
+      "id": "glass-1",
+      "name": "Frame Check",
+      "description": "Find smart glasses or an AI wearable.",
+      "metric": "category:smart_glasses_ai_wearables",
+      "target": 1,
+      "xp": 100,
+      "min_level": 3,
+      "weight": 0.5
+    },
+    {
+      "id": "rc-2",
+      "name": "Hobby Hangar",
+      "description": "Find 2 RC, drone or hobby devices.",
+      "metric": "category:hobby_rc_drones",
+      "target": 2,
+      "xp": 90,
+      "min_level": 3,
+      "weight": 0.7
+    },
+    {
+      "id": "aud-4",
+      "name": "Earful",
+      "description": "Find 4 audio devices.",
+      "metric": "category:wearables_audio",
+      "target": 4,
+      "xp": 60,
+      "min_level": 2
+    },
+    {
+      "id": "beacon-2",
+      "name": "Beacon Hunt",
+      "description": "Find 2 proximity beacons.",
+      "metric": "category:proximity_beacons",
+      "target": 2,
+      "xp": 80,
+      "min_level": 3,
+      "weight": 0.7
+    },
+    {
+      "id": "venue-3",
+      "name": "Venue Vibes",
+      "description": "Find 3 venue or facility devices.",
+      "metric": "category:venues_facilities",
+      "target": 3,
+      "xp": 70,
+      "min_level": 2
+    },
+    {
+      "id": "grid-1",
+      "name": "Off-Grid Check",
+      "description": "Find an off-grid power device.",
+      "metric": "category:outdoor_offgrid_power",
+      "target": 1,
+      "xp": 80,
+      "min_level": 3,
+      "weight": 0.6
+    },
+    {
+      "id": "book-1",
+      "name": "Bookworm",
+      "description": "Find an e-reader or digital notepad.",
+      "metric": "category:ereaders_notepads_reading",
+      "target": 1,
+      "xp": 60,
+      "min_level": 2,
+      "weight": 0.7
+    },
+    {
+      "id": "assist-1",
+      "name": "Assistive Signals",
+      "description": "Find an accessibility or assistive device.",
+      "metric": "category:accessibility_hearing_assistive",
+      "target": 1,
+      "xp": 90,
+      "min_level": 3,
+      "weight": 0.5
+    },
+    {
+      "id": "farm-1",
+      "name": "Down on the Farm",
+      "description": "Find a farm or agriculture device.",
+      "metric": "category:rural_farm_agriculture",
+      "target": 1,
+      "xp": 100,
+      "min_level": 3,
+      "weight": 0.5
+    },
+    {
+      "id": "util-1",
+      "name": "Smart City Sweep",
+      "description": "Find a utility, SCADA or smart city device.",
+      "metric": "category:utilities_scada_smart_city",
+      "target": 1,
+      "xp": 120,
+      "min_level": 5,
+      "weight": 0.4
+    },
+    {
+      "id": "build-2",
+      "name": "Job Site",
+      "description": "Find 2 construction, mining or heavy equipment devices.",
+      "metric": "category:construction_mining_oilgas_heavy",
+      "target": 2,
+      "xp": 100,
+      "min_level": 3,
+      "weight": 0.5
+    },
+    {
+      "id": "mil-1",
+      "name": "Government Gear Check",
+      "description": "Find military, defense or government gear.",
+      "metric": "category:military_defense_govt",
+      "target": 1,
+      "xp": 200,
+      "min_level": 6,
+      "weight": 0.25
+    },
+    {
+      "id": "air-1",
+      "name": "Sky and Sea",
+      "description": "Find an aviation or marine device.",
+      "metric": "category:aviation_marine_gliding",
+      "target": 1,
+      "xp": 100,
+      "min_level": 3,
+      "weight": 0.5
+    },
+    {
+      "id": "fleet-1",
+      "name": "Road Crew",
+      "description": "Find a fleet, RV or trucking device.",
+      "metric": "category:commercial_fleet_rv_trucking",
+      "target": 1,
+      "xp": 90,
+      "min_level": 3,
+      "weight": 0.5
+    },
+    {
+      "id": "moto-2",
+      "name": "Rider Spotted",
+      "description": "Find 2 motorcycle or powersports devices.",
+      "metric": "category:motorcycle_powersports_gear",
+      "target": 2,
+      "xp": 80,
+      "min_level": 2,
+      "weight": 0.7
+    },
+    {
+      "id": "mission-start",
+      "name": "Accept the Challenge",
+      "description": "Start a timed mission (press y).",
+      "metric": "missions_started",
+      "target": 1,
+      "xp": 20,
+      "weight": 0.8
+    },
+    {
+      "id": "mission-1",
+      "name": "Mission Ready",
+      "description": "Complete a timed mission (press y).",
+      "metric": "missions_completed",
+      "target": 1,
+      "xp": 70,
+      "min_level": 2,
+      "weight": 0.8
+    },
+    {
+      "id": "mission-3",
+      "name": "Mission Streak",
+      "description": "Complete 3 timed missions today.",
+      "metric": "missions_completed",
+      "target": 3,
+      "xp": 200,
+      "min_level": 6,
+      "weight": 0.4
+    }
+  ],
+  "bounties": [
+    {
+      "id": "first-tag",
+      "name": "Tag Spotter",
+      "description": "Spot any tracker or tagged valuable.",
+      "match": {
+        "category": "trackers_valuables"
+      },
+      "xp": 60,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "tag-trio",
+      "name": "Tag Trio",
+      "description": "Spot 3 different trackers today.",
+      "match": {
+        "category": "trackers_valuables"
+      },
+      "xp": 90,
+      "difficulty": "medium",
+      "repeat": "daily",
+      "count": 3
+    },
+    {
+      "id": "close-encounter",
+      "name": "Close Encounter",
+      "description": "Get a device within arm's reach (stronger than -45 dBm).",
+      "match": {
+        "min_rssi": -45
+      },
+      "xp": 30,
+      "difficulty": "easy",
+      "repeat": "daily",
+      "count": 1
+    },
+    {
+      "id": "watch-party",
+      "name": "Watch Party",
+      "description": "Spot 2 smartwatches or fitness bands by name today.",
+      "match": {
+        "name": "(watch|band|fit)"
+      },
+      "xp": 40,
+      "difficulty": "easy",
+      "repeat": "daily",
+      "count": 2
+    },
+    {
+      "id": "earbud-trio",
+      "name": "Earbud Trio",
+      "description": "Spot 3 earbuds or headphones by name today.",
+      "match": {
+        "name": "(buds|pods|headphone|earbud)"
+      },
+      "xp": 50,
+      "difficulty": "easy",
+      "repeat": "daily",
+      "count": 3
+    },
+    {
+      "id": "apple-orchard",
+      "name": "Apple Orchard",
+      "description": "Spot 10 different Apple devices today.",
+      "match": {
+        "mfg": "0x004C"
+      },
+      "xp": 60,
+      "difficulty": "easy",
+      "repeat": "daily",
+      "count": 10
+    },
+    {
+      "id": "iot-sweep",
+      "name": "Smart Home Sweep",
+      "description": "Spot 5 smart home / IoT devices today.",
+      "match": {
+        "category": "smart_iot"
+      },
+      "xp": 70,
+      "difficulty": "medium",
+      "repeat": "daily",
+      "count": 5
+    },
+    {
+      "id": "beacon-net",
+      "name": "Beacon Network",
+      "description": "Spot 3 proximity beacons.",
+      "match": {
+        "label": "beacon|eddystone|gimbal|estimote|kontakt|minew|ruuvi|blukii|sensoro"
+      },
+      "xp": 80,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 3
+    },
+    {
+      "id": "mesh-hunter",
+      "name": "Mesh Mapper",
+      "description": "Spot 3 networking / mesh nodes.",
+      "match": {
+        "category": "networking_mesh"
+      },
+      "xp": 80,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 3
+    },
+    {
+      "id": "pet-tag",
+      "name": "Pet Patrol",
+      "description": "Spot a pet tracker.",
+      "match": {
+        "category": "pet_trackers"
+      },
+      "xp": 50,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "medical-signal",
+      "name": "Vital Signs",
+      "description": "Spot a medical or health device broadcasting nearby.",
+      "match": {
+        "category": "medical_health"
+      },
+      "xp": 100,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "pentest-gear",
+      "name": "Red Team Radar",
+      "description": "Spot hacker / pentest gear.",
+      "match": {
+        "category": "hacker_pentest"
+      },
+      "xp": 150,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "remote-id",
+      "name": "Eyes Up",
+      "description": "Spot a drone broadcasting Remote ID.",
+      "match": {
+        "uuid": "FFFA"
+      },
+      "xp": 250,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "flagged-device",
+      "name": "Flag Planted",
+      "description": "Spot a device the scanner flags as ALERT.",
+      "match": {
+        "tier": "alert"
+      },
+      "xp": 200,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "possible-flag",
+      "name": "Maybe Something",
+      "description": "Spot a device the scanner flags as POSSIBLE.",
+      "match": {
+        "tier": "possible"
+      },
+      "xp": 100,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "handheld-hero",
+      "name": "Handheld Hero",
+      "description": "Spot a handheld gaming device or XR headset.",
+      "match": {
+        "category": "handhelds_gaming"
+      },
+      "xp": 60,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "trail-cam",
+      "name": "Trail Cam Spotted",
+      "description": "Spot a trail or game camera by name.",
+      "match": {
+        "category": "hunting_trail_woods",
+        "name": "(spypoint|tactacam|moultrie|browning|stealth ?cam|reconyx|cuddeback|cuddelink|wildgame|covert|ltl|acorn|trail ?cam|game ?cam)"
+      },
+      "xp": 150,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "trail-cam-trio",
+      "name": "Camera Shy",
+      "description": "Spot 3 different trail or game cameras.",
+      "match": {
+        "category": "hunting_trail_woods",
+        "name": "(spypoint|tactacam|moultrie|browning|stealth ?cam|reconyx|cuddeback|cuddelink|wildgame|covert|ltl|acorn|trail ?cam|game ?cam)"
+      },
+      "xp": 250,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 3
+    },
+    {
+      "id": "hunt-optics",
+      "name": "Glass Collector",
+      "description": "Spot a hunting rangefinder, scope or thermal optic.",
+      "match": {
+        "category": "hunting_trail_woods",
+        "name": "(rangefinder|kilo|leupold|vortex|sig|xero|nikon|leica|swarovski|burris|pulsar|infiray|hikmicro|trophy ridge|thermal)"
+      },
+      "xp": 180,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "dog-collar",
+      "name": "Good Dog",
+      "description": "Spot a hunting-dog tracking collar.",
+      "match": {
+        "category": "hunting_trail_woods",
+        "name": "(alpha|astro|sportdog|dogtra|tri-?tronics|canicom|educator|delta)"
+      },
+      "xp": 120,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "wildlife-telemetry",
+      "name": "Wildlife Biologist",
+      "description": "Spot wildlife telemetry or acoustic research gear.",
+      "match": {
+        "category": "hunting_trail_woods",
+        "name": "(lotek|holohil|telonics|vectronic|song ?meter|audiomoth)"
+      },
+      "xp": 250,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "woods-close",
+      "name": "Right on Top",
+      "description": "Get a woods device within arm's reach (stronger than -55 dBm).",
+      "match": {
+        "category": "hunting_trail_woods",
+        "min_rssi": -55
+      },
+      "xp": 120,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "leo-gear",
+      "name": "Thin Blue Signal",
+      "description": "Spot law enforcement or tactical gear.",
+      "match": {
+        "tier": "alert"
+      },
+      "xp": 250,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "flock-spotter",
+      "name": "Flock Spotter",
+      "description": "Spot a Flock or Raven style camera or sensor.",
+      "match": {
+        "name": "(flock|raven)"
+      },
+      "xp": 250,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "body-cam",
+      "name": "Body Cam Spotted",
+      "description": "Spot an Axon or body-worn camera.",
+      "match": {
+        "name": "(axon|body ?cam|wolfcom|digital ally|bwc)"
+      },
+      "xp": 200,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "leo-possible",
+      "name": "Unconfirmed Contact",
+      "description": "Spot a possible law enforcement device.",
+      "match": {
+        "tier": "possible"
+      },
+      "xp": 120,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "ems-signal",
+      "name": "Emergency Signal",
+      "description": "Spot EMS, fire or rescue gear.",
+      "match": {
+        "category": "ems_ambulance_fire_rescue"
+      },
+      "xp": 200,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "skimmer",
+      "name": "Skimmer Alert",
+      "description": "Spot a device that looks like a card skimmer.",
+      "match": {
+        "category": "card_skimmer_suspects"
+      },
+      "xp": 200,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "pos-spot",
+      "name": "Cash Register Radar",
+      "description": "Spot a point-of-sale or retail device.",
+      "match": {
+        "category": "commercial_pos_retail"
+      },
+      "xp": 50,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "sec-lock",
+      "name": "Smart Lock Spotter",
+      "description": "Spot a security or access control device.",
+      "match": {
+        "category": "security_access_control"
+      },
+      "xp": 100,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "crypto-key",
+      "name": "Hardware Wallet",
+      "description": "Spot a hardware wallet or security key.",
+      "match": {
+        "category": "crypto_security_keys"
+      },
+      "xp": 120,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "smart-glasses",
+      "name": "Smart Glasses Spotted",
+      "description": "Spot smart glasses or an AI wearable.",
+      "match": {
+        "category": "smart_glasses_ai_wearables"
+      },
+      "xp": 150,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "rc-pilot",
+      "name": "Hobby Pilot Spotted",
+      "description": "Spot an RC, drone or hobby device.",
+      "match": {
+        "category": "hobby_rc_drones"
+      },
+      "xp": 120,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "venue-scout",
+      "name": "Venue Scout",
+      "description": "Spot a venue or facility device.",
+      "match": {
+        "category": "venues_facilities"
+      },
+      "xp": 60,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "portable-power",
+      "name": "Portable Power",
+      "description": "Spot an off-grid or portable power device.",
+      "match": {
+        "category": "outdoor_offgrid_power"
+      },
+      "xp": 70,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "ereader",
+      "name": "E-Reader Spotted",
+      "description": "Spot an e-reader or digital notepad.",
+      "match": {
+        "category": "ereaders_notepads_reading"
+      },
+      "xp": 50,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "assistive",
+      "name": "Assistive Tech Spotted",
+      "description": "Spot an accessibility or assistive device.",
+      "match": {
+        "category": "accessibility_hearing_assistive"
+      },
+      "xp": 70,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "ag-tech",
+      "name": "Ag-Tech Spotted",
+      "description": "Spot a farm or agriculture device.",
+      "match": {
+        "category": "rural_farm_agriculture"
+      },
+      "xp": 100,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "utility-signal",
+      "name": "Utility Signal",
+      "description": "Spot a utility, SCADA or smart city device.",
+      "match": {
+        "category": "utilities_scada_smart_city"
+      },
+      "xp": 150,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "heavy-gear",
+      "name": "Heavy Equipment",
+      "description": "Spot a construction, mining or heavy equipment device.",
+      "match": {
+        "category": "construction_mining_oilgas_heavy"
+      },
+      "xp": 120,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "govt-gear",
+      "name": "Government Gear",
+      "description": "Spot military, defense or government gear.",
+      "match": {
+        "category": "military_defense_govt"
+      },
+      "xp": 250,
+      "difficulty": "hard",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "pilot-gear",
+      "name": "Pilot or Skipper",
+      "description": "Spot an aviation, marine or gliding device.",
+      "match": {
+        "category": "aviation_marine_gliding"
+      },
+      "xp": 100,
+      "difficulty": "medium",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "fleet-tracker",
+      "name": "Fleet Tracker",
+      "description": "Spot a fleet, RV or trucking device.",
+      "match": {
+        "category": "commercial_fleet_rv_trucking"
+      },
+      "xp": 70,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    },
+    {
+      "id": "helmet-comms",
+      "name": "Helmet Comms",
+      "description": "Spot a motorcycle or powersports device.",
+      "match": {
+        "category": "motorcycle_powersports_gear"
+      },
+      "xp": 70,
+      "difficulty": "easy",
+      "repeat": "once",
+      "count": 1
+    }
+  ],
+  "achievements": [
+    {
+      "id": "first-contact",
+      "name": "First Contact",
+      "description": "See your first device.",
+      "metric": "devices_seen",
+      "target": 1,
+      "xp": 10,
+      "icon": "📡",
+      "hidden": false
+    },
+    {
+      "id": "seen-50",
+      "name": "Getting Started",
+      "description": "See 50 devices.",
+      "metric": "devices_seen",
+      "target": 50,
+      "xp": 40,
+      "icon": "📡",
+      "hidden": false
+    },
+    {
+      "id": "seen-250",
+      "name": "Neighborhood Watch",
+      "description": "See 250 devices.",
+      "metric": "devices_seen",
+      "target": 250,
+      "xp": 100,
+      "icon": "📡",
+      "hidden": false
+    },
+    {
+      "id": "seen-1000",
+      "name": "Spectrum Surveyor",
+      "description": "See 1,000 devices.",
+      "metric": "devices_seen",
+      "target": 1000,
+      "xp": 250,
+      "icon": "📡",
+      "hidden": false
+    },
+    {
+      "id": "seen-5000",
+      "name": "Airwave Atlas",
+      "description": "See 5,000 devices.",
+      "metric": "devices_seen",
+      "target": 5000,
+      "xp": 600,
+      "icon": "🗺",
+      "hidden": false
+    },
+    {
+      "id": "scan-30",
+      "name": "Warming Up",
+      "description": "Scan for 30 minutes in total.",
+      "metric": "scan_minutes",
+      "target": 30,
+      "xp": 30,
+      "icon": "⏱",
+      "hidden": false
+    },
+    {
+      "id": "scan-180",
+      "name": "Three Hour Tour",
+      "description": "Scan for 3 hours in total.",
+      "metric": "scan_minutes",
+      "target": 180,
+      "xp": 100,
+      "icon": "⏱",
+      "hidden": false
+    },
+    {
+      "id": "scan-600",
+      "name": "Night Shift",
+      "description": "Scan for 10 hours in total.",
+      "metric": "scan_minutes",
+      "target": 600,
+      "xp": 250,
+      "icon": "⏱",
+      "hidden": false
+    },
+    {
+      "id": "scan-3000",
+      "name": "Lifer",
+      "description": "Scan for 50 hours in total.",
+      "metric": "scan_minutes",
+      "target": 3000,
+      "xp": 700,
+      "icon": "⏱",
+      "hidden": false
+    },
+    {
+      "id": "sessions-5",
+      "name": "Regular",
+      "description": "Start 5 sessions.",
+      "metric": "sessions",
+      "target": 5,
+      "xp": 30,
+      "icon": "🔁",
+      "hidden": false
+    },
+    {
+      "id": "sessions-25",
+      "name": "Creature of Habit",
+      "description": "Start 25 sessions.",
+      "metric": "sessions",
+      "target": 25,
+      "xp": 120,
+      "icon": "🔁",
+      "hidden": false
+    },
+    {
+      "id": "sessions-100",
+      "name": "Fixture",
+      "description": "Start 100 sessions.",
+      "metric": "sessions",
+      "target": 100,
+      "xp": 400,
+      "icon": "🔁",
+      "hidden": false
+    },
+    {
+      "id": "cats-5",
+      "name": "Curious",
+      "description": "See 5 different categories.",
+      "metric": "distinct_categories",
+      "target": 5,
+      "xp": 40,
+      "icon": "🧭",
+      "hidden": false
+    },
+    {
+      "id": "cats-10",
+      "name": "Well Rounded",
+      "description": "See 10 different categories.",
+      "metric": "distinct_categories",
+      "target": 10,
+      "xp": 100,
+      "icon": "🧭",
+      "hidden": false
+    },
+    {
+      "id": "cats-15",
+      "name": "Completionist",
+      "description": "See 15 different categories.",
+      "metric": "distinct_categories",
+      "target": 15,
+      "xp": 250,
+      "icon": "🧭",
+      "hidden": false
+    },
+    {
+      "id": "vendors-10",
+      "name": "Label Reader",
+      "description": "See 10 different vendors.",
+      "metric": "distinct_vendors",
+      "target": 10,
+      "xp": 40,
+      "icon": "🏷",
+      "hidden": false
+    },
+    {
+      "id": "vendors-50",
+      "name": "Brand Hound",
+      "description": "See 50 different vendors.",
+      "metric": "distinct_vendors",
+      "target": 50,
+      "xp": 150,
+      "icon": "🏷",
+      "hidden": false
+    },
+    {
+      "id": "vendors-150",
+      "name": "Supply Chain",
+      "description": "See 150 different vendors.",
+      "metric": "distinct_vendors",
+      "target": 150,
+      "xp": 400,
+      "icon": "🏷",
+      "hidden": false
+    },
+    {
+      "id": "first-hunt",
+      "name": "Found It",
+      "description": "Finish your first hunt.",
+      "metric": "hunts_completed",
+      "target": 1,
+      "xp": 40,
+      "icon": "🎯",
+      "hidden": false
+    },
+    {
+      "id": "hunts-10",
+      "name": "Bloodhound",
+      "description": "Finish 10 hunts.",
+      "metric": "hunts_completed",
+      "target": 10,
+      "xp": 150,
+      "icon": "🎯",
+      "hidden": false
+    },
+    {
+      "id": "hunts-50",
+      "name": "Relentless",
+      "description": "Finish 50 hunts.",
+      "metric": "hunts_completed",
+      "target": 50,
+      "xp": 500,
+      "icon": "🎯",
+      "hidden": false
+    },
+    {
+      "id": "ghosts-10",
+      "name": "Double Vision",
+      "description": "Link 10 address rotations.",
+      "metric": "rotations_linked",
+      "target": 10,
+      "xp": 60,
+      "icon": "👻",
+      "hidden": false
+    },
+    {
+      "id": "ghosts-100",
+      "name": "Ghost Whisperer",
+      "description": "Link 100 address rotations.",
+      "metric": "rotations_linked",
+      "target": 100,
+      "xp": 250,
+      "icon": "👻",
+      "hidden": false
+    },
+    {
+      "id": "first-flag",
+      "name": "Something's There",
+      "description": "Have the scanner flag an ALERT device.",
+      "metric": "alerts_found",
+      "target": 1,
+      "xp": 100,
+      "icon": "🚩",
+      "hidden": false
+    },
+    {
+      "id": "flags-10",
+      "name": "Sharp Eyes",
+      "description": "Have the scanner flag 10 ALERT devices.",
+      "metric": "alerts_found",
+      "target": 10,
+      "xp": 300,
+      "icon": "🚩",
+      "hidden": false
+    },
+    {
+      "id": "first-follower",
+      "name": "Looking Over Your Shoulder",
+      "description": "Catch a tracker following you (Follower Watch SUSPECT or ALERT).",
+      "metric": "followers_flagged",
+      "target": 1,
+      "xp": 150,
+      "icon": "👁",
+      "hidden": false
+    },
+    {
+      "id": "streak-3",
+      "name": "Three in a Row",
+      "description": "Reach a 3-day streak.",
+      "metric": "streak_days",
+      "target": 3,
+      "xp": 50,
+      "icon": "🔥",
+      "hidden": false
+    },
+    {
+      "id": "streak-7",
+      "name": "Weekly Habit",
+      "description": "Reach a 7-day streak.",
+      "metric": "streak_days",
+      "target": 7,
+      "xp": 150,
+      "icon": "🔥",
+      "hidden": false
+    },
+    {
+      "id": "streak-30",
+      "name": "Unbroken",
+      "description": "Reach a 30-day streak.",
+      "metric": "streak_days",
+      "target": 30,
+      "xp": 600,
+      "icon": "🔥",
+      "hidden": false
+    },
+    {
+      "id": "quests-10",
+      "name": "Quest Taker",
+      "description": "Complete 10 daily quests.",
+      "metric": "quests_completed",
+      "target": 10,
+      "xp": 60,
+      "icon": "✅",
+      "hidden": false
+    },
+    {
+      "id": "quests-50",
+      "name": "Quest Regular",
+      "description": "Complete 50 daily quests.",
+      "metric": "quests_completed",
+      "target": 50,
+      "xp": 250,
+      "icon": "✅",
+      "hidden": false
+    },
+    {
+      "id": "quests-200",
+      "name": "Quest Veteran",
+      "description": "Complete 200 daily quests.",
+      "metric": "quests_completed",
+      "target": 200,
+      "xp": 700,
+      "icon": "✅",
+      "hidden": false
+    },
+    {
+      "id": "bounties-5",
+      "name": "Bounty Rookie",
+      "description": "Claim 5 bounties.",
+      "metric": "bounties_claimed",
+      "target": 5,
+      "xp": 60,
+      "icon": "💰",
+      "hidden": false
+    },
+    {
+      "id": "bounties-25",
+      "name": "Bounty Pro",
+      "description": "Claim 25 bounties.",
+      "metric": "bounties_claimed",
+      "target": 25,
+      "xp": 250,
+      "icon": "💰",
+      "hidden": false
+    },
+    {
+      "id": "crowd-25",
+      "name": "Crowded Room",
+      "description": "Have 25 devices in range at once.",
+      "metric": "max_in_range",
+      "target": 25,
+      "xp": 50,
+      "icon": "👥",
+      "hidden": false
+    },
+    {
+      "id": "crowd-75",
+      "name": "Stadium Mode",
+      "description": "Have 75 devices in range at once.",
+      "metric": "max_in_range",
+      "target": 75,
+      "xp": 200,
+      "icon": "👥",
+      "hidden": false
+    },
+    {
+      "id": "crowd-150",
+      "name": "Signal Storm",
+      "description": "Have 150 devices in range at once.",
+      "metric": "max_in_range",
+      "target": 150,
+      "xp": 500,
+      "icon": "👥",
+      "hidden": false
+    },
+    {
+      "id": "namer-5",
+      "name": "Name Tag",
+      "description": "Name 5 devices.",
+      "metric": "devices_renamed",
+      "target": 5,
+      "xp": 40,
+      "icon": "✏",
+      "hidden": false
+    },
+    {
+      "id": "drone-spotter",
+      "name": "Eyes on the Sky",
+      "description": "See a device in the auto / aerial category.",
+      "metric": "category:auto_aerial",
+      "target": 1,
+      "xp": 80,
+      "icon": "🚁",
+      "hidden": false
+    },
+    {
+      "id": "tags-10",
+      "name": "Lost and Found",
+      "description": "See 10 trackers.",
+      "metric": "category:trackers_valuables",
+      "target": 10,
+      "xp": 120,
+      "icon": "📍",
+      "hidden": false
+    },
+    {
+      "id": "level-10",
+      "name": "Double Digits",
+      "description": "Reach level 10.",
+      "metric": "level",
+      "target": 10,
+      "xp": 100,
+      "icon": "⬆",
+      "hidden": false
+    },
+    {
+      "id": "level-25",
+      "name": "Quarter Century",
+      "description": "Reach level 25.",
+      "metric": "level",
+      "target": 25,
+      "xp": 300,
+      "icon": "⬆",
+      "hidden": false
+    },
+    {
+      "id": "level-50",
+      "name": "Halfway There",
+      "description": "Reach level 50.",
+      "metric": "level",
+      "target": 50,
+      "xp": 800,
+      "icon": "⬆",
+      "hidden": false
+    },
+    {
+      "id": "packets-1m",
+      "name": "Firehose",
+      "description": "Receive 1,000,000 packets.",
+      "metric": "packets",
+      "target": 1000000,
+      "xp": 300,
+      "icon": "🌊",
+      "hidden": true
+    },
+    {
+      "id": "night-owl-marathon",
+      "name": "Marathon Session",
+      "description": "Scan for 3 hours straight in one session.",
+      "metric": "longest_session_minutes",
+      "target": 180,
+      "xp": 300,
+      "icon": "🦉",
+      "hidden": true
+    },
+    {
+      "id": "woods-1",
+      "name": "Tree Line",
+      "description": "Find your first hunting or woods device.",
+      "metric": "category:hunting_trail_woods",
+      "target": 1,
+      "xp": 60,
+      "icon": "🌲",
+      "hidden": false
+    },
+    {
+      "id": "woods-10",
+      "name": "Trail Watcher",
+      "description": "Find 10 hunting or woods devices.",
+      "metric": "category:hunting_trail_woods",
+      "target": 10,
+      "xp": 150,
+      "icon": "🦌",
+      "hidden": false
+    },
+    {
+      "id": "woods-50",
+      "name": "Master Woodsman",
+      "description": "Find 50 hunting or woods devices.",
+      "metric": "category:hunting_trail_woods",
+      "target": 50,
+      "xp": 500,
+      "icon": "🏕",
+      "hidden": false
+    },
+    {
+      "id": "leo-1",
+      "name": "Badge Collector",
+      "description": "Spot your first law enforcement or tactical device.",
+      "metric": "tier:alert",
+      "target": 1,
+      "xp": 150,
+      "icon": "🚔",
+      "hidden": false
+    },
+    {
+      "id": "leo-5",
+      "name": "Perimeter Awareness",
+      "description": "Spot 5 law enforcement or tactical devices.",
+      "metric": "tier:alert",
+      "target": 5,
+      "xp": 300,
+      "icon": "🛡",
+      "hidden": false
+    },
+    {
+      "id": "leo-25",
+      "name": "Situational Awareness",
+      "description": "Spot 25 law enforcement or tactical devices.",
+      "metric": "tier:alert",
+      "target": 25,
+      "xp": 700,
+      "icon": "🎖",
+      "hidden": true
+    },
+    {
+      "id": "maybe-3",
+      "name": "Gut Feeling",
+      "description": "Spot 3 possible law enforcement devices.",
+      "metric": "tier:possible",
+      "target": 3,
+      "xp": 150,
+      "icon": "🤔",
+      "hidden": false
+    },
+    {
+      "id": "maybe-15",
+      "name": "Pattern Recognition",
+      "description": "Spot 15 possible law enforcement devices.",
+      "metric": "tier:possible",
+      "target": 15,
+      "xp": 400,
+      "icon": "🔎",
+      "hidden": false
+    },
+    {
+      "id": "ems-1",
+      "name": "Rescue Radar",
+      "description": "Spot your first EMS, fire or rescue device.",
+      "metric": "category:ems_ambulance_fire_rescue",
+      "target": 1,
+      "xp": 100,
+      "icon": "🚑",
+      "hidden": false
+    },
+    {
+      "id": "ems-5",
+      "name": "Code Three",
+      "description": "Spot 5 EMS, fire or rescue devices.",
+      "metric": "category:ems_ambulance_fire_rescue",
+      "target": 5,
+      "xp": 300,
+      "icon": "🚒",
+      "hidden": false
+    },
+    {
+      "id": "skim-1",
+      "name": "Skimmer Suspect",
+      "description": "Spot a possible card skimmer device.",
+      "metric": "category:card_skimmer_suspects",
+      "target": 1,
+      "xp": 200,
+      "icon": "💳",
+      "hidden": false
+    },
+    {
+      "id": "skim-5",
+      "name": "Fraud Fighter",
+      "description": "Spot 5 possible card skimmer devices.",
+      "metric": "category:card_skimmer_suspects",
+      "target": 5,
+      "xp": 500,
+      "icon": "🕵",
+      "hidden": true
+    },
+    {
+      "id": "pos-10",
+      "name": "Point of Sale",
+      "description": "Find 10 point-of-sale or retail devices.",
+      "metric": "category:commercial_pos_retail",
+      "target": 10,
+      "xp": 100,
+      "icon": "🛒",
+      "hidden": false
+    },
+    {
+      "id": "pos-50",
+      "name": "Retail Therapy",
+      "description": "Find 50 point-of-sale or retail devices.",
+      "metric": "category:commercial_pos_retail",
+      "target": 50,
+      "xp": 300,
+      "icon": "🏬",
+      "hidden": false
+    },
+    {
+      "id": "sec-5",
+      "name": "Access Granted",
+      "description": "Find 5 security or access control devices.",
+      "metric": "category:security_access_control",
+      "target": 5,
+      "xp": 150,
+      "icon": "🔐",
+      "hidden": false
+    },
+    {
+      "id": "sec-30",
+      "name": "Head of Security",
+      "description": "Find 30 security or access control devices.",
+      "metric": "category:security_access_control",
+      "target": 30,
+      "xp": 450,
+      "icon": "🗝",
+      "hidden": false
+    },
+    {
+      "id": "key-1",
+      "name": "Keymaster",
+      "description": "Spot a hardware wallet or security key.",
+      "metric": "category:crypto_security_keys",
+      "target": 1,
+      "xp": 120,
+      "icon": "🔑",
+      "hidden": false
+    },
+    {
+      "id": "key-10",
+      "name": "Cold Storage",
+      "description": "Spot 10 hardware wallets or security keys.",
+      "metric": "category:crypto_security_keys",
+      "target": 10,
+      "xp": 350,
+      "icon": "🧊",
+      "hidden": false
+    },
+    {
+      "id": "glass-1",
+      "name": "Through the Lens",
+      "description": "Spot smart glasses or an AI wearable.",
+      "metric": "category:smart_glasses_ai_wearables",
+      "target": 1,
+      "xp": 120,
+      "icon": "🕶",
+      "hidden": false
+    },
+    {
+      "id": "glass-5",
+      "name": "Wearable Watcher",
+      "description": "Spot 5 smart glasses or AI wearables.",
+      "metric": "category:smart_glasses_ai_wearables",
+      "target": 5,
+      "xp": 300,
+      "icon": "🥽",
+      "hidden": false
+    },
+    {
+      "id": "rc-10",
+      "name": "Flight Line",
+      "description": "Find 10 RC, drone or hobby devices.",
+      "metric": "category:hobby_rc_drones",
+      "target": 10,
+      "xp": 150,
+      "icon": "🛩",
+      "hidden": false
+    },
+    {
+      "id": "rc-50",
+      "name": "Air Boss",
+      "description": "Find 50 RC, drone or hobby devices.",
+      "metric": "category:hobby_rc_drones",
+      "target": 50,
+      "xp": 450,
+      "icon": "🚁",
+      "hidden": false
+    },
+    {
+      "id": "aud-25",
+      "name": "Audiophile",
+      "description": "Find 25 audio devices.",
+      "metric": "category:wearables_audio",
+      "target": 25,
+      "xp": 150,
+      "icon": "🎧",
+      "hidden": false
+    },
+    {
+      "id": "aud-100",
+      "name": "Sound Collector",
+      "description": "Find 100 audio devices.",
+      "metric": "category:wearables_audio",
+      "target": 100,
+      "xp": 400,
+      "icon": "🔊",
+      "hidden": false
+    },
+    {
+      "id": "beacon-10",
+      "name": "Lighthouse Keeper",
+      "description": "Find 10 proximity beacons.",
+      "metric": "category:proximity_beacons",
+      "target": 10,
+      "xp": 150,
+      "icon": "💡",
+      "hidden": false
+    },
+    {
+      "id": "beacon-50",
+      "name": "Beacon Baron",
+      "description": "Find 50 proximity beacons.",
+      "metric": "category:proximity_beacons",
+      "target": 50,
+      "xp": 400,
+      "icon": "🗼",
+      "hidden": false
+    },
+    {
+      "id": "venue-10",
+      "name": "Out and About",
+      "description": "Find 10 venue or facility devices.",
+      "metric": "category:venues_facilities",
+      "target": 10,
+      "xp": 100,
+      "icon": "🏟",
+      "hidden": false
+    },
+    {
+      "id": "venue-50",
+      "name": "Regular Everywhere",
+      "description": "Find 50 venue or facility devices.",
+      "metric": "category:venues_facilities",
+      "target": 50,
+      "xp": 300,
+      "icon": "🎪",
+      "hidden": false
+    },
+    {
+      "id": "grid-5",
+      "name": "Power Camper",
+      "description": "Find 5 off-grid power devices.",
+      "metric": "category:outdoor_offgrid_power",
+      "target": 5,
+      "xp": 150,
+      "icon": "🔋",
+      "hidden": false
+    },
+    {
+      "id": "grid-25",
+      "name": "Off-Grid Veteran",
+      "description": "Find 25 off-grid power devices.",
+      "metric": "category:outdoor_offgrid_power",
+      "target": 25,
+      "xp": 400,
+      "icon": "☀",
+      "hidden": false
+    },
+    {
+      "id": "book-5",
+      "name": "Library Card",
+      "description": "Find 5 e-readers or digital notepads.",
+      "metric": "category:ereaders_notepads_reading",
+      "target": 5,
+      "xp": 100,
+      "icon": "📚",
+      "hidden": false
+    },
+    {
+      "id": "assist-5",
+      "name": "Assistive Tech Aware",
+      "description": "Find 5 accessibility or assistive devices.",
+      "metric": "category:accessibility_hearing_assistive",
+      "target": 5,
+      "xp": 150,
+      "icon": "♿",
+      "hidden": false
+    },
+    {
+      "id": "farm-5",
+      "name": "Farmhand",
+      "description": "Find 5 farm or agriculture devices.",
+      "metric": "category:rural_farm_agriculture",
+      "target": 5,
+      "xp": 200,
+      "icon": "🚜",
+      "hidden": false
+    },
+    {
+      "id": "farm-20",
+      "name": "Cattle Baron",
+      "description": "Find 20 farm or agriculture devices.",
+      "metric": "category:rural_farm_agriculture",
+      "target": 20,
+      "xp": 500,
+      "icon": "🐄",
+      "hidden": false
+    },
+    {
+      "id": "util-3",
+      "name": "Grid Watcher",
+      "description": "Find 3 utility or smart city devices.",
+      "metric": "category:utilities_scada_smart_city",
+      "target": 3,
+      "xp": 250,
+      "icon": "⚡",
+      "hidden": false
+    },
+    {
+      "id": "build-5",
+      "name": "Hard Hat",
+      "description": "Find 5 construction or heavy equipment devices.",
+      "metric": "category:construction_mining_oilgas_heavy",
+      "target": 5,
+      "xp": 200,
+      "icon": "🏗",
+      "hidden": false
+    },
+    {
+      "id": "build-25",
+      "name": "Foreman",
+      "description": "Find 25 construction or heavy equipment devices.",
+      "metric": "category:construction_mining_oilgas_heavy",
+      "target": 25,
+      "xp": 500,
+      "icon": "🚧",
+      "hidden": false
+    },
+    {
+      "id": "mil-1",
+      "name": "Need to Know",
+      "description": "Find military, defense or government gear.",
+      "metric": "category:military_defense_govt",
+      "target": 1,
+      "xp": 250,
+      "icon": "🎯",
+      "hidden": true
+    },
+    {
+      "id": "mil-5",
+      "name": "Cleared",
+      "description": "Find 5 military, defense or government devices.",
+      "metric": "category:military_defense_govt",
+      "target": 5,
+      "xp": 600,
+      "icon": "🔒",
+      "hidden": true
+    },
+    {
+      "id": "air-5",
+      "name": "Aviator",
+      "description": "Find 5 aviation or marine devices.",
+      "metric": "category:aviation_marine_gliding",
+      "target": 5,
+      "xp": 200,
+      "icon": "✈",
+      "hidden": false
+    },
+    {
+      "id": "air-25",
+      "name": "Captain",
+      "description": "Find 25 aviation or marine devices.",
+      "metric": "category:aviation_marine_gliding",
+      "target": 25,
+      "xp": 500,
+      "icon": "⚓",
+      "hidden": false
+    },
+    {
+      "id": "fleet-5",
+      "name": "Long Haul",
+      "description": "Find 5 fleet, RV or trucking devices.",
+      "metric": "category:commercial_fleet_rv_trucking",
+      "target": 5,
+      "xp": 150,
+      "icon": "🚛",
+      "hidden": false
+    },
+    {
+      "id": "moto-10",
+      "name": "Throttle Spotter",
+      "description": "Find 10 motorcycle or powersports devices.",
+      "metric": "category:motorcycle_powersports_gear",
+      "target": 10,
+      "xp": 150,
+      "icon": "🏍",
+      "hidden": false
+    },
+    {
+      "id": "moto-50",
+      "name": "Road Captain",
+      "description": "Find 50 motorcycle or powersports devices.",
+      "metric": "category:motorcycle_powersports_gear",
+      "target": 50,
+      "xp": 400,
+      "icon": "🛣",
+      "hidden": false
+    },
+    {
+      "id": "cats-25",
+      "name": "Collector's Edition",
+      "description": "See 25 different device categories.",
+      "metric": "distinct_categories",
+      "target": 25,
+      "xp": 400,
+      "icon": "🗂",
+      "hidden": false
+    },
+    {
+      "id": "cats-35",
+      "name": "Full Spectrum Legend",
+      "description": "See 35 different device categories.",
+      "metric": "distinct_categories",
+      "target": 35,
+      "xp": 800,
+      "icon": "🌈",
+      "hidden": false
+    },
+    {
+      "id": "flags-25",
+      "name": "Eagle Eye",
+      "description": "Have the scanner flag 25 ALERT devices.",
+      "metric": "alerts_found",
+      "target": 25,
+      "xp": 600,
+      "icon": "🦅",
+      "hidden": false
+    },
+    {
+      "id": "flags-100",
+      "name": "Never Off Duty",
+      "description": "Have the scanner flag 100 ALERT devices.",
+      "metric": "alerts_found",
+      "target": 100,
+      "xp": 1500,
+      "icon": "🚨",
+      "hidden": false
+    },
+    {
+      "id": "possibles-10",
+      "name": "Hunch Hunter",
+      "description": "Have the scanner flag 10 POSSIBLE devices.",
+      "metric": "possibles_found",
+      "target": 10,
+      "xp": 150,
+      "icon": "🔍",
+      "hidden": false
+    },
+    {
+      "id": "possibles-50",
+      "name": "Pattern Spotter",
+      "description": "Have the scanner flag 50 POSSIBLE devices.",
+      "metric": "possibles_found",
+      "target": 50,
+      "xp": 400,
+      "icon": "🧩",
+      "hidden": false
+    },
+    {
+      "id": "hunts-25",
+      "name": "Tracker",
+      "description": "Finish 25 hunts.",
+      "metric": "hunts_completed",
+      "target": 25,
+      "xp": 300,
+      "icon": "🐾",
+      "hidden": false
+    },
+    {
+      "id": "hunts-100",
+      "name": "Apex Tracker",
+      "description": "Finish 100 hunts.",
+      "metric": "hunts_completed",
+      "target": 100,
+      "xp": 1000,
+      "icon": "🐺",
+      "hidden": false
+    },
+    {
+      "id": "followers-5",
+      "name": "Paranoid, Probably Right",
+      "description": "Catch 5 trackers following you.",
+      "metric": "followers_flagged",
+      "target": 5,
+      "xp": 500,
+      "icon": "👀",
+      "hidden": false
+    },
+    {
+      "id": "streak-14",
+      "name": "Fortnight",
+      "description": "Reach a 14-day streak.",
+      "metric": "streak_days",
+      "target": 14,
+      "xp": 300,
+      "icon": "📅",
+      "hidden": false
+    },
+    {
+      "id": "streak-60",
+      "name": "Two Months Strong",
+      "description": "Reach a 60-day streak.",
+      "metric": "streak_days",
+      "target": 60,
+      "xp": 800,
+      "icon": "🗓",
+      "hidden": false
+    },
+    {
+      "id": "streak-100",
+      "name": "Centurion",
+      "description": "Reach a 100-day streak.",
+      "metric": "streak_days",
+      "target": 100,
+      "xp": 1500,
+      "icon": "💯",
+      "hidden": false
+    },
+    {
+      "id": "level-75",
+      "name": "Seasoned",
+      "description": "Reach level 75.",
+      "metric": "level",
+      "target": 75,
+      "xp": 1200,
+      "icon": "🌟",
+      "hidden": false
+    },
+    {
+      "id": "level-100",
+      "name": "Maxed Out",
+      "description": "Reach level 100.",
+      "metric": "level",
+      "target": 100,
+      "xp": 3000,
+      "icon": "👑",
+      "hidden": false
+    },
+    {
+      "id": "bounties-50",
+      "name": "Bounty Legend",
+      "description": "Claim 50 bounties.",
+      "metric": "bounties_claimed",
+      "target": 50,
+      "xp": 500,
+      "icon": "🏴",
+      "hidden": false
+    },
+    {
+      "id": "scan-6000",
+      "name": "Hundred Hour Club",
+      "description": "Scan for 100 hours.",
+      "metric": "scan_minutes",
+      "target": 6000,
+      "xp": 1500,
+      "icon": "⏱",
+      "hidden": false
+    },
+    {
+      "id": "quests-500",
+      "name": "Quest Legend",
+      "description": "Complete 500 daily quests.",
+      "metric": "quests_completed",
+      "target": 500,
+      "xp": 1500,
+      "icon": "📜",
+      "hidden": false
+    },
+    {
+      "id": "vendors-300",
+      "name": "Brand Encyclopedia",
+      "description": "See 300 different vendors.",
+      "metric": "distinct_vendors",
+      "target": 300,
+      "xp": 1000,
+      "icon": "📖",
+      "hidden": false
+    },
+    {
+      "id": "mission-first",
+      "name": "Mission Accepted",
+      "description": "Complete your first mission.",
+      "metric": "missions_completed",
+      "target": 1,
+      "xp": 60,
+      "icon": "🎯",
+      "hidden": false
+    },
+    {
+      "id": "missions-10",
+      "name": "Field Agent",
+      "description": "Complete 10 missions.",
+      "metric": "missions_completed",
+      "target": 10,
+      "xp": 200,
+      "icon": "⏱",
+      "hidden": false
+    },
+    {
+      "id": "missions-50",
+      "name": "Mission Commander",
+      "description": "Complete 50 missions.",
+      "metric": "missions_completed",
+      "target": 50,
+      "xp": 600,
+      "icon": "🎖",
+      "hidden": false
+    },
+    {
+      "id": "days-7",
+      "name": "Regular",
+      "description": "Scan on 7 different days.",
+      "metric": "active_days",
+      "target": 7,
+      "xp": 60,
+      "icon": "📅",
+      "hidden": false
+    },
+    {
+      "id": "days-30",
+      "name": "Creature of Habit",
+      "description": "Scan on 30 different days.",
+      "metric": "active_days",
+      "target": 30,
+      "xp": 200,
+      "icon": "📅",
+      "hidden": false
+    },
+    {
+      "id": "days-100",
+      "name": "Fixture",
+      "description": "Scan on 100 different days.",
+      "metric": "active_days",
+      "target": 100,
+      "xp": 600,
+      "icon": "📅",
+      "hidden": false
+    },
+    {
+      "id": "days-365",
+      "name": "Year of the Signal",
+      "description": "Scan on 365 different days.",
+      "metric": "active_days",
+      "target": 365,
+      "xp": 2500,
+      "icon": "📅",
+      "hidden": false
+    },
+    {
+      "id": "caches-1",
+      "name": "First Loot",
+      "description": "Open your first cache.",
+      "metric": "caches_opened",
+      "target": 1,
+      "xp": 30,
+      "icon": "📦",
+      "hidden": false
+    },
+    {
+      "id": "caches-10",
+      "name": "Loot Goblin",
+      "description": "Open 10 caches.",
+      "metric": "caches_opened",
+      "target": 10,
+      "xp": 100,
+      "icon": "📦",
+      "hidden": false
+    },
+    {
+      "id": "caches-50",
+      "name": "Cache Hunter",
+      "description": "Open 50 caches.",
+      "metric": "caches_opened",
+      "target": 50,
+      "xp": 300,
+      "icon": "📦",
+      "hidden": false
+    },
+    {
+      "id": "caches-150",
+      "name": "Vault Cracker",
+      "description": "Open 150 caches.",
+      "metric": "caches_opened",
+      "target": 150,
+      "xp": 800,
+      "icon": "📦",
+      "hidden": false
+    },
+    {
+      "id": "weekly-1",
+      "name": "Week One",
+      "description": "Finish a weekly op.",
+      "metric": "weekly_goals_done",
+      "target": 1,
+      "xp": 40,
+      "icon": "🗓",
+      "hidden": false
+    },
+    {
+      "id": "weekly-10",
+      "name": "Weekly Regular",
+      "description": "Finish 10 weekly ops.",
+      "metric": "weekly_goals_done",
+      "target": 10,
+      "xp": 150,
+      "icon": "🗓",
+      "hidden": false
+    },
+    {
+      "id": "weekly-40",
+      "name": "Weekly Warrior",
+      "description": "Finish 40 weekly ops.",
+      "metric": "weekly_goals_done",
+      "target": 40,
+      "xp": 500,
+      "icon": "🗓",
+      "hidden": false
+    },
+    {
+      "id": "weekly-100",
+      "name": "Never Off Duty",
+      "description": "Finish 100 weekly ops.",
+      "metric": "weekly_goals_done",
+      "target": 100,
+      "xp": 1500,
+      "icon": "🗓",
+      "hidden": false
+    },
+    {
+      "id": "shield-1",
+      "name": "Close Call",
+      "description": "Let a Streak Shield save your streak.",
+      "metric": "shields_used",
+      "target": 1,
+      "xp": 50,
+      "icon": "🛡",
+      "hidden": false
+    },
+    {
+      "id": "shield-5",
+      "name": "Nine Lives",
+      "description": "Let Streak Shields save your streak 5 times.",
+      "metric": "shields_used",
+      "target": 5,
+      "xp": 200,
+      "icon": "🛡",
+      "hidden": false
+    }
+  ],
+  "titles": [
+    {
+      "id": "newcomer",
+      "name": "Newcomer",
+      "description": "Everyone starts somewhere.",
+      "unlock": {
+        "type": "always"
+      }
+    },
+    {
+      "id": "signal-seeker",
+      "name": "Signal Seeker",
+      "description": "Reached level 3.",
+      "unlock": {
+        "type": "level",
+        "value": 3
+      }
+    },
+    {
+      "id": "spectrum-walker",
+      "name": "Spectrum Walker",
+      "description": "Reached level 10.",
+      "unlock": {
+        "type": "level",
+        "value": 10
+      }
+    },
+    {
+      "id": "airwave-veteran",
+      "name": "Airwave Veteran",
+      "description": "Reached level 25.",
+      "unlock": {
+        "type": "level",
+        "value": 25
+      }
+    },
+    {
+      "id": "ether-master",
+      "name": "Ether Master",
+      "description": "Reached level 50.",
+      "unlock": {
+        "type": "level",
+        "value": 50
+      }
+    },
+    {
+      "id": "first-light",
+      "name": "First Light",
+      "description": "Saw your first device.",
+      "unlock": {
+        "type": "achievement",
+        "id": "first-contact"
+      }
+    },
+    {
+      "id": "bloodhound",
+      "name": "Bloodhound",
+      "description": "Finished 10 hunts.",
+      "unlock": {
+        "type": "achievement",
+        "id": "hunts-10"
+      }
+    },
+    {
+      "id": "ghost-whisperer",
+      "name": "Ghost Whisperer",
+      "description": "Linked 100 address rotations.",
+      "unlock": {
+        "type": "achievement",
+        "id": "ghosts-100"
+      }
+    },
+    {
+      "id": "watchful",
+      "name": "Watchful",
+      "description": "Caught a tracker following you.",
+      "unlock": {
+        "type": "achievement",
+        "id": "first-follower"
+      }
+    },
+    {
+      "id": "completionist",
+      "name": "Completionist",
+      "description": "Saw 15 device categories.",
+      "unlock": {
+        "type": "achievement",
+        "id": "cats-15"
+      }
+    },
+    {
+      "id": "marathoner",
+      "name": "Marathoner",
+      "description": "Scanned for 10 hours.",
+      "unlock": {
+        "type": "achievement",
+        "id": "scan-600"
+      }
+    },
+    {
+      "id": "streak-keeper",
+      "name": "Streak Keeper",
+      "description": "Kept a 7-day streak.",
+      "unlock": {
+        "type": "achievement",
+        "id": "streak-7"
+      }
+    },
+    {
+      "id": "tag-spotter",
+      "name": "Tag Spotter",
+      "description": "Claimed the Tag Spotter bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "first-tag"
+      }
+    },
+    {
+      "id": "sky-watcher",
+      "name": "Sky Watcher",
+      "description": "Spotted a drone broadcasting Remote ID.",
+      "unlock": {
+        "type": "bounty",
+        "id": "remote-id"
+      }
+    },
+    {
+      "id": "bounty-hunter",
+      "name": "Bounty Hunter",
+      "description": "Claimed 25 bounties.",
+      "unlock": {
+        "type": "metric",
+        "metric": "bounties_claimed",
+        "target": 25
+      }
+    },
+    {
+      "id": "regular",
+      "name": "Regular",
+      "description": "Completed the Quick Sweep quest.",
+      "unlock": {
+        "type": "quest",
+        "id": "sweep-small"
+      }
+    },
+    {
+      "id": "data-hoarder",
+      "name": "Data Hoarder",
+      "description": "Received 100,000 packets.",
+      "unlock": {
+        "type": "metric",
+        "metric": "packets",
+        "target": 100000
+      }
+    },
+    {
+      "id": "woodsman",
+      "name": "Woodsman",
+      "description": "Claimed the Trail Cam Spotted bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "trail-cam"
+      }
+    },
+    {
+      "id": "trail-boss",
+      "name": "Trail Boss",
+      "description": "Found 10 hunting or woods devices.",
+      "unlock": {
+        "type": "achievement",
+        "id": "woods-10"
+      }
+    },
+    {
+      "id": "master-woodsman",
+      "name": "Grizzled Woodsman",
+      "description": "Found 50 hunting or woods devices.",
+      "unlock": {
+        "type": "achievement",
+        "id": "woods-50"
+      }
+    },
+    {
+      "id": "camera-shy",
+      "name": "Camera Shy",
+      "description": "Found 3 different trail cameras.",
+      "unlock": {
+        "type": "bounty",
+        "id": "trail-cam-trio"
+      }
+    },
+    {
+      "id": "glass-collector",
+      "name": "Glass Collector",
+      "description": "Spotted hunting optics.",
+      "unlock": {
+        "type": "bounty",
+        "id": "hunt-optics"
+      }
+    },
+    {
+      "id": "good-dog",
+      "name": "Good Dog",
+      "description": "Spotted a hunting-dog collar.",
+      "unlock": {
+        "type": "bounty",
+        "id": "dog-collar"
+      }
+    },
+    {
+      "id": "wildlife-bio",
+      "name": "Wildlife Biologist",
+      "description": "Spotted wildlife research gear.",
+      "unlock": {
+        "type": "bounty",
+        "id": "wildlife-telemetry"
+      }
+    },
+    {
+      "id": "counter-surveillance",
+      "name": "Counter-Surveillance",
+      "description": "Claimed the Thin Blue Signal bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "leo-gear"
+      }
+    },
+    {
+      "id": "plate-reader",
+      "name": "Plate Reader",
+      "description": "Spotted a Flock or Raven style device.",
+      "unlock": {
+        "type": "bounty",
+        "id": "flock-spotter"
+      }
+    },
+    {
+      "id": "situational",
+      "name": "Situationally Aware",
+      "description": "Spotted 25 law enforcement devices.",
+      "unlock": {
+        "type": "achievement",
+        "id": "leo-25"
+      }
+    },
+    {
+      "id": "gut-feeling",
+      "name": "Gut Feeling",
+      "description": "Spotted 3 possible law enforcement devices.",
+      "unlock": {
+        "type": "achievement",
+        "id": "maybe-3"
+      }
+    },
+    {
+      "id": "siren-watcher",
+      "name": "Siren Watcher",
+      "description": "Claimed the Emergency Signal bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "ems-signal"
+      }
+    },
+    {
+      "id": "fraud-watcher",
+      "name": "Fraud Watcher",
+      "description": "Claimed the Skimmer Alert bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "skimmer"
+      }
+    },
+    {
+      "id": "shopkeeper",
+      "name": "Shopkeeper",
+      "description": "Claimed the Cash Register Radar bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "pos-spot"
+      }
+    },
+    {
+      "id": "locksmith",
+      "name": "Locksmith",
+      "description": "Claimed the Smart Lock Spotter bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "sec-lock"
+      }
+    },
+    {
+      "id": "crypto-keeper",
+      "name": "Crypto Keeper",
+      "description": "Claimed the Hardware Wallet bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "crypto-key"
+      }
+    },
+    {
+      "id": "lens-watcher",
+      "name": "Lens Watcher",
+      "description": "Claimed the Smart Glasses Spotted bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "smart-glasses"
+      }
+    },
+    {
+      "id": "air-boss",
+      "name": "Air Boss",
+      "description": "Found 50 RC, drone or hobby devices.",
+      "unlock": {
+        "type": "achievement",
+        "id": "rc-50"
+      }
+    },
+    {
+      "id": "audiophile",
+      "name": "Audiophile",
+      "description": "Found 25 audio devices.",
+      "unlock": {
+        "type": "achievement",
+        "id": "aud-25"
+      }
+    },
+    {
+      "id": "lighthouse",
+      "name": "Lighthouse Keeper",
+      "description": "Found 10 proximity beacons.",
+      "unlock": {
+        "type": "achievement",
+        "id": "beacon-10"
+      }
+    },
+    {
+      "id": "venue-scout-title",
+      "name": "Venue Scout",
+      "description": "Claimed the Venue Scout bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "venue-scout"
+      }
+    },
+    {
+      "id": "off-grid",
+      "name": "Off-Grid",
+      "description": "Claimed the Portable Power bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "portable-power"
+      }
+    },
+    {
+      "id": "bookworm",
+      "name": "Bookworm",
+      "description": "Claimed the E-Reader Spotted bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "ereader"
+      }
+    },
+    {
+      "id": "farmhand-title",
+      "name": "Farmhand",
+      "description": "Claimed the Ag-Tech Spotted bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "ag-tech"
+      }
+    },
+    {
+      "id": "grid-watcher-title",
+      "name": "Grid Watcher",
+      "description": "Claimed the Utility Signal bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "utility-signal"
+      }
+    },
+    {
+      "id": "hard-hat-title",
+      "name": "Hard Hat",
+      "description": "Claimed the Heavy Equipment bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "heavy-gear"
+      }
+    },
+    {
+      "id": "need-to-know",
+      "name": "Need to Know",
+      "description": "Claimed the Government Gear bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "govt-gear"
+      }
+    },
+    {
+      "id": "captain-title",
+      "name": "Captain",
+      "description": "Claimed the Pilot or Skipper bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "pilot-gear"
+      }
+    },
+    {
+      "id": "long-hauler",
+      "name": "Long Hauler",
+      "description": "Claimed the Fleet Tracker bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "fleet-tracker"
+      }
+    },
+    {
+      "id": "road-rider",
+      "name": "Road Rider",
+      "description": "Claimed the Helmet Comms bounty.",
+      "unlock": {
+        "type": "bounty",
+        "id": "helmet-comms"
+      }
+    },
+    {
+      "id": "collectors-edition",
+      "name": "Collector",
+      "description": "Saw 25 device categories.",
+      "unlock": {
+        "type": "achievement",
+        "id": "cats-25"
+      }
+    },
+    {
+      "id": "full-spectrum",
+      "name": "Full Spectrum",
+      "description": "Saw 35 device categories.",
+      "unlock": {
+        "type": "achievement",
+        "id": "cats-35"
+      }
+    },
+    {
+      "id": "eagle-eye",
+      "name": "Eagle Eye",
+      "description": "Had the scanner flag 25 ALERT devices.",
+      "unlock": {
+        "type": "achievement",
+        "id": "flags-25"
+      }
+    },
+    {
+      "id": "never-off-duty",
+      "name": "Never Off Duty",
+      "description": "Had the scanner flag 100 ALERT devices.",
+      "unlock": {
+        "type": "achievement",
+        "id": "flags-100"
+      }
+    },
+    {
+      "id": "apex-tracker",
+      "name": "Apex Tracker",
+      "description": "Finished 100 hunts.",
+      "unlock": {
+        "type": "achievement",
+        "id": "hunts-100"
+      }
+    },
+    {
+      "id": "fortnight-title",
+      "name": "Fortnighter",
+      "description": "Kept a 14-day streak.",
+      "unlock": {
+        "type": "achievement",
+        "id": "streak-14"
+      }
+    },
+    {
+      "id": "centurion",
+      "name": "Centurion",
+      "description": "Kept a 100-day streak.",
+      "unlock": {
+        "type": "achievement",
+        "id": "streak-100"
+      }
+    },
+    {
+      "id": "paranoid",
+      "name": "Paranoid (Probably Right)",
+      "description": "Caught 5 trackers following you.",
+      "unlock": {
+        "type": "achievement",
+        "id": "followers-5"
+      }
+    },
+    {
+      "id": "seasoned",
+      "name": "Seasoned",
+      "description": "Reached level 75.",
+      "unlock": {
+        "type": "level",
+        "value": 75
+      }
+    },
+    {
+      "id": "maxed-out",
+      "name": "Maxed Out",
+      "description": "Reached level 100.",
+      "unlock": {
+        "type": "level",
+        "value": 100
+      }
+    },
+    {
+      "id": "bounty-legend",
+      "name": "Bounty Legend",
+      "description": "Claimed 50 bounties.",
+      "unlock": {
+        "type": "achievement",
+        "id": "bounties-50"
+      }
+    },
+    {
+      "id": "hundred-hours",
+      "name": "Hundred Hour Club",
+      "description": "Scanned for 100 hours.",
+      "unlock": {
+        "type": "achievement",
+        "id": "scan-6000"
+      }
+    },
+    {
+      "id": "quest-legend",
+      "name": "Quest Legend",
+      "description": "Completed 500 daily quests.",
+      "unlock": {
+        "type": "achievement",
+        "id": "quests-500"
+      }
+    },
+    {
+      "id": "encyclopedia",
+      "name": "Brand Encyclopedia",
+      "description": "Saw 300 different vendors.",
+      "unlock": {
+        "type": "achievement",
+        "id": "vendors-300"
+      }
+    },
+    {
+      "id": "packet-hoarder",
+      "name": "Packet Hoarder",
+      "description": "Received 5,000,000 packets.",
+      "unlock": {
+        "type": "metric",
+        "metric": "packets",
+        "target": 5000000
+      }
+    },
+    {
+      "id": "field-agent",
+      "name": "Field Agent",
+      "description": "Completed 10 missions.",
+      "unlock": {
+        "type": "achievement",
+        "id": "missions-10"
+      }
+    },
+    {
+      "id": "mission-commander",
+      "name": "Mission Commander",
+      "description": "Completed 50 missions.",
+      "unlock": {
+        "type": "achievement",
+        "id": "missions-50"
+      }
+    },
+    {
+      "id": "fixture",
+      "name": "Fixture",
+      "description": "Scanned on 100 different days.",
+      "unlock": {
+        "type": "metric",
+        "metric": "active_days",
+        "target": 100
+      }
+    },
+    {
+      "id": "cache-hunter",
+      "name": "Cache Hunter",
+      "description": "Opened 50 caches.",
+      "unlock": {
+        "type": "metric",
+        "metric": "caches_opened",
+        "target": 50
+      }
+    },
+    {
+      "id": "weekly-warrior",
+      "name": "Weekly Warrior",
+      "description": "Finished 40 weekly ops.",
+      "unlock": {
+        "type": "metric",
+        "metric": "weekly_goals_done",
+        "target": 40
+      }
+    },
+    {
+      "id": "close-call",
+      "name": "Close Call",
+      "description": "A Streak Shield saved your streak.",
+      "unlock": {
+        "type": "metric",
+        "metric": "shields_used",
+        "target": 1
+      }
+    }
+  ],
+  "coin_rules": {
+    "new_category": 3,
+    "alert_device": 4,
+    "possible_device": 2,
+    "follower_alert": 5,
+    "hunt_completed": 4,
+    "daily_login": 2,
+    "level_up": 5,
+    "all_quests_done": 10,
+    "device_batch": 1,
+    "scan_hour": 2,
+    "bounty_easy": 5,
+    "bounty_medium": 10,
+    "bounty_hard": 20,
+    "bounty_elite": 40,
+    "mission_easy": 5,
+    "mission_medium": 10,
+    "mission_hard": 20,
+    "mission_elite": 40,
+    "mission_speed_bonus": 3
+  },
+  "coin_caps": {
+    "alert_device": 20,
+    "possible_device": 20,
+    "follower_alert": 25,
+    "hunt_completed": 20,
+    "device_batch": 20,
+    "scan_hour": 24,
+    "mission_reward": 80
+  },
+  "shop": [
+    {
+      "id": "theme-matrix",
+      "name": "Matrix",
+      "price": 80,
+      "min_level": 1
+    },
+    {
+      "id": "theme-amber",
+      "name": "Amber CRT",
+      "price": 80,
+      "min_level": 1
+    },
+    {
+      "id": "theme-ice",
+      "name": "Cyber Ice",
+      "price": 110,
+      "min_level": 1
+    },
+    {
+      "id": "theme-phantom",
+      "name": "Phantom",
+      "price": 110,
+      "min_level": 1
+    },
+    {
+      "id": "theme-toxic",
+      "name": "Toxic Waste",
+      "price": 160,
+      "min_level": 3
+    },
+    {
+      "id": "theme-synthwave",
+      "name": "Synthwave",
+      "price": 160,
+      "min_level": 3
+    },
+    {
+      "id": "theme-prism",
+      "name": "Prism",
+      "price": 300,
+      "min_level": 10
+    },
+    {
+      "id": "neon-mode",
+      "name": "Neon Mode",
+      "price": 250,
+      "min_level": 5
+    },
+    {
+      "id": "glitch-tear",
+      "name": "Signal Tear",
+      "price": 150,
+      "min_level": 1
+    },
+    {
+      "id": "glitch-chroma",
+      "name": "Chroma Split",
+      "price": 200,
+      "min_level": 2
+    },
+    {
+      "id": "glitch-corrupt",
+      "name": "Data Corruption",
+      "price": 200,
+      "min_level": 2
+    },
+    {
+      "id": "glitch-meltdown",
+      "name": "Total Meltdown",
+      "price": 500,
+      "min_level": 15
+    },
+    {
+      "id": "decrypt-status",
+      "name": "Decrypt Status Line",
+      "price": 120,
+      "min_level": 1
+    }
+  ],
+  "boot": {
+    "enabled": true,
+    "speed": 1.0,
+    "banner": "ACCESS GRANTED",
+    "play_intro": true,
+    "lines": []
+  },
+  "missions": [
+    {
+      "id": "vendor-rush",
+      "name": "Vendor Rush",
+      "description": "Find 5 different vendors in 3 minutes.",
+      "time": 180,
+      "difficulty": "easy",
+      "xp": 50,
+      "objectives": [
+        {
+          "distinct": "vendor",
+          "target": 5,
+          "label": "different vendors"
+        }
+      ]
+    },
+    {
+      "id": "speed-sweep",
+      "name": "Speed Sweep",
+      "description": "Discover 15 new devices in 90 seconds.",
+      "time": 90,
+      "difficulty": "easy",
+      "xp": 50,
+      "objectives": [
+        {
+          "target": 15,
+          "label": "new devices"
+        }
+      ]
+    },
+    {
+      "id": "apple-picking",
+      "name": "Apple Picking",
+      "description": "Spot 8 Apple devices in 3 minutes.",
+      "time": 180,
+      "difficulty": "medium",
+      "xp": 90,
+      "objectives": [
+        {
+          "match": {
+            "mfg": "0x004C"
+          },
+          "target": 8,
+          "label": "Apple devices"
+        }
+      ]
+    },
+    {
+      "id": "category-chase",
+      "name": "Category Chase",
+      "description": "See 4 different categories in 4 minutes.",
+      "time": 240,
+      "difficulty": "medium",
+      "xp": 100,
+      "min_level": 2,
+      "objectives": [
+        {
+          "distinct": "category",
+          "target": 4,
+          "label": "different categories"
+        }
+      ]
+    },
+    {
+      "id": "wrist-sprint",
+      "name": "Wrist Sprint",
+      "description": "Find 6 wearables or audio devices in 3 minutes.",
+      "time": 180,
+      "difficulty": "medium",
+      "xp": 100,
+      "objectives": [
+        {
+          "match": {
+            "category": "wearables_audio"
+          },
+          "target": 6,
+          "label": "wearables / audio"
+        }
+      ]
+    },
+    {
+      "id": "smart-dash",
+      "name": "Smart Home Dash",
+      "description": "Find 5 smart home devices in 4 minutes.",
+      "time": 240,
+      "difficulty": "medium",
+      "xp": 100,
+      "objectives": [
+        {
+          "match": {
+            "category": "smart_iot"
+          },
+          "target": 5,
+          "label": "smart home devices"
+        }
+      ]
+    },
+    {
+      "id": "tag-team",
+      "name": "Tag Team",
+      "description": "Find 2 trackers in 5 minutes.",
+      "time": 300,
+      "difficulty": "medium",
+      "xp": 130,
+      "min_level": 3,
+      "objectives": [
+        {
+          "match": {
+            "category": "trackers_valuables"
+          },
+          "target": 2,
+          "label": "trackers"
+        }
+      ]
+    },
+    {
+      "id": "ghost-grab",
+      "name": "Ghost Grab",
+      "description": "Link 3 rotating addresses in 5 minutes.",
+      "time": 300,
+      "difficulty": "medium",
+      "xp": 120,
+      "min_level": 3,
+      "objectives": [
+        {
+          "metric": "rotations_linked",
+          "target": 3,
+          "label": "rotations linked"
+        }
+      ]
+    },
+    {
+      "id": "brand-blitz",
+      "name": "Brand Blitz",
+      "description": "Find 10 different vendors in 5 minutes.",
+      "time": 300,
+      "difficulty": "hard",
+      "xp": 200,
+      "min_level": 4,
+      "objectives": [
+        {
+          "distinct": "vendor",
+          "target": 10,
+          "label": "different vendors"
+        }
+      ]
+    },
+    {
+      "id": "triple-threat",
+      "name": "Triple Threat",
+      "description": "3 categories and 6 vendors in 4 minutes.",
+      "time": 240,
+      "difficulty": "hard",
+      "xp": 240,
+      "min_level": 5,
+      "objectives": [
+        {
+          "distinct": "category",
+          "target": 3,
+          "label": "categories"
+        },
+        {
+          "distinct": "vendor",
+          "target": 6,
+          "label": "vendors"
+        }
+      ]
+    },
+    {
+      "id": "red-flag-run",
+      "name": "Red Flag Run",
+      "description": "Get the scanner to flag an ALERT or POSSIBLE device in 10 minutes.",
+      "time": 600,
+      "difficulty": "hard",
+      "xp": 220,
+      "min_level": 5,
+      "objectives": [
+        {
+          "match": {
+            "tier": [
+              "alert",
+              "possible"
+            ]
+          },
+          "target": 1,
+          "label": "flagged device"
+        }
+      ]
+    },
+    {
+      "id": "spectrum-master",
+      "name": "Spectrum Master",
+      "description": "8 categories and 20 vendors in 10 minutes.",
+      "time": 600,
+      "difficulty": "elite",
+      "xp": 400,
+      "min_level": 10,
+      "objectives": [
+        {
+          "distinct": "category",
+          "target": 8,
+          "label": "categories"
+        },
+        {
+          "distinct": "vendor",
+          "target": 20,
+          "label": "vendors"
+        }
+      ]
+    }
+  ],
+  "retention": {
+    "surge": {
+      "enabled": true,
+      "minutes": 15,
+      "multiplier": 2.0
+    },
+    "streak_ladder": [
+      2,
+      2,
+      3,
+      3,
+      4,
+      5,
+      10
+    ],
+    "shield": {
+      "max": 2,
+      "free_every": 7
+    },
+    "comeback": {
+      "min_days_away": 3,
+      "xp": 100,
+      "coins": 10
+    },
+    "caches": [
+      {
+        "id": "bronze",
+        "name": "Bronze Cache",
+        "quests": 3,
+        "coins": [
+          3,
+          8
+        ],
+        "xp": [
+          20,
+          50
+        ],
+        "shield_chance": 0.0,
+        "jackpot_chance": 0.03,
+        "jackpot_mult": 4
+      },
+      {
+        "id": "silver",
+        "name": "Silver Cache",
+        "quests": 6,
+        "coins": [
+          6,
+          14
+        ],
+        "xp": [
+          40,
+          100
+        ],
+        "shield_chance": 0.1,
+        "jackpot_chance": 0.05,
+        "jackpot_mult": 4
+      },
+      {
+        "id": "gold",
+        "name": "Gold Cache",
+        "quests": "all",
+        "coins": [
+          12,
+          30
+        ],
+        "xp": [
+          80,
+          200
+        ],
+        "shield_chance": 0.25,
+        "jackpot_chance": 0.08,
+        "jackpot_mult": 5
+      }
+    ],
+    "weekly_count": 4,
+    "weekly_chest": {
+      "enabled": true,
+      "name": "Weekly Chest",
+      "coins": [
+        40,
+        90
+      ],
+      "xp": [
+        300,
+        700
+      ],
+      "shield_chance": 1.0,
+      "jackpot_chance": 0.1,
+      "jackpot_mult": 3
+    },
+    "weekly": [
+      {
+        "id": "week-show-up",
+        "name": "Show Up",
+        "description": "Scan on 5 different days this week.",
+        "metric": "active_days",
+        "target": 5,
+        "xp": 250,
+        "always": true
+      },
+      {
+        "id": "week-devices",
+        "name": "Wide Net",
+        "description": "Discover 400 new devices this week.",
+        "metric": "devices_seen",
+        "target": 400,
+        "xp": 200
+      },
+      {
+        "id": "week-devices-big",
+        "name": "Dragnet",
+        "description": "Discover 1,000 new devices this week.",
+        "metric": "devices_seen",
+        "target": 1000,
+        "xp": 350,
+        "min_level": 8
+      },
+      {
+        "id": "week-scan",
+        "name": "Long Watch",
+        "description": "Scan for 3 hours in total this week.",
+        "metric": "scan_minutes",
+        "target": 180,
+        "xp": 200
+      },
+      {
+        "id": "week-scan-big",
+        "name": "Night Shift",
+        "description": "Scan for 8 hours in total this week.",
+        "metric": "scan_minutes",
+        "target": 480,
+        "xp": 400,
+        "min_level": 8
+      },
+      {
+        "id": "week-quests",
+        "name": "Quest Grinder",
+        "description": "Finish 15 daily quests this week.",
+        "metric": "quests_completed",
+        "target": 15,
+        "xp": 250
+      },
+      {
+        "id": "week-bounties",
+        "name": "Bounty Run",
+        "description": "Claim 3 bounties this week.",
+        "metric": "bounties_claimed",
+        "target": 3,
+        "xp": 250
+      },
+      {
+        "id": "week-missions",
+        "name": "Mission Runner",
+        "description": "Complete 3 timed missions this week.",
+        "metric": "missions_completed",
+        "target": 3,
+        "xp": 200
+      },
+      {
+        "id": "week-hunts",
+        "name": "Tracker",
+        "description": "Win 2 hunts this week.",
+        "metric": "hunts_completed",
+        "target": 2,
+        "xp": 200
+      },
+      {
+        "id": "week-possibles",
+        "name": "Sharp Eye",
+        "description": "Spot 5 POSSIBLE-tier devices this week.",
+        "metric": "possibles_found",
+        "target": 5,
+        "xp": 250
+      },
+      {
+        "id": "week-ghosts",
+        "name": "Ghost Catcher",
+        "description": "Link 100 rotating addresses back to their device this week.",
+        "metric": "rotations_linked",
+        "target": 100,
+        "xp": 200
+      },
+      {
+        "id": "week-caches",
+        "name": "Cache Hunter",
+        "description": "Open 5 daily caches this week.",
+        "metric": "caches_opened",
+        "target": 5,
+        "xp": 200
+      }
+    ]
+  }
+}
