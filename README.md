@@ -4,7 +4,7 @@
 
 Signal OPS is a terminal game and passive Bluetooth Low Energy (BLE) scanner. It listens to the advertisements that phones, watches, earbuds, trackers, cars, cameras and smart-home gadgets broadcast all day long, works out what each device probably is, estimates how close it is, and turns it all into a game with XP, levels, quests, bounties and achievements.
 
-Designed and tested on the **Steam Deck**. Free and open source. Developed by one person.
+Designed and tested on the **Steam Deck**. Free and open source under the MIT license. Developed by one person.
 
 ## It is a real scanner
 
@@ -82,7 +82,7 @@ Signal OPS is keyboard-driven. On a Steam Deck, use the on-screen keyboard or a 
 Optional:
 
 - `bluetooth-numbers` for the full Bluetooth SIG company list.
-- Sound files next to the script (`.wav`, `.mp3`, `.ogg` or `.flac`) and a sound player on your system such as `paplay`, `aplay`, `ffplay` or `mpg123`.
+- A sound player on your system such as `paplay`, `aplay`, `ffplay` or `mpg123`. The sound files are included and sit next to the script. You can swap in your own (`.wav`, `.mp3`, `.ogg` or `.flac`).
 
 ## Install on a Steam Deck
 
@@ -184,6 +184,7 @@ Run `python3 scanner.py --help` for the complete list.
 | `lookout_settings.json` | Your settings (created on first run) |
 | `lookout_profile.json` | Your progress (created on first run) |
 | `lookout_known.json` | Devices you have named or ignored |
+| Sound files (`.mp3`) | Sound effects from Pixabay, kept next to `scanner.py` |
 | `session_logs/` | HTML reports from your sessions |
 
 Your profile, settings, known devices and session logs stay on your machine. Do not commit them if you fork the project.
@@ -192,7 +193,7 @@ Your profile, settings, known devices and session logs stay on your machine. Do 
 
 - **Adapter error or nothing found:** check that Bluetooth is on, list adapters with `hciconfig`, and pass the right one with `--adapter`.
 - **Missing library:** activate your environment with `source ~/lookout/venv/bin/activate` and run the `pip install` line again.
-- **No sound:** sound files are optional. Put them next to the script, and make sure a player such as `paplay` is installed. Press `m` to check you are not muted.
+- **No sound:** check that the sound files are in the same folder as `scanner.py`, and that a player such as `paplay` is installed. Press `m` to check you are not muted.
 - **Too many unknown devices:** run `python3 scanner.py --update-db`, then add rules to `scanner_config.json` and check them with `--check-config`.
 - **Screen looks cramped:** make your terminal window larger or try the Compact List view.
 
@@ -210,4 +211,6 @@ Donating is optional. Supporters get a sparkling player name and a gold SUPPORTE
 
 ## License
 
-See the `LICENSE` file in this repository.
+The code in Signal OPS is released under the MIT License. See the `LICENSE` file in this repository for the full text.
+
+The sound files are not covered by the MIT License. They come from [Pixabay](https://pixabay.com) and are used under the [Pixabay Content License](https://pixabay.com/service/license-summary/). If you reuse them outside this project, check that license first, as it does not allow redistributing the files on their own.
