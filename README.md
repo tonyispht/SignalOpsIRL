@@ -2,6 +2,9 @@
 
 **A game played with the real Bluetooth devices around you.**
 
+[video.webm](https://github.com/user-attachments/assets/bdd5ca80-5e67-4289-81e3-1bc55d8ed111)
+
+
 Signal OPS is a terminal game and passive Bluetooth Low Energy (BLE) scanner. It listens to the advertisements that phones, watches, earbuds, trackers, cars, cameras and smart-home gadgets broadcast all day long, works out what each device probably is, estimates how close it is, and turns it all into a game with XP, levels, quests, bounties and achievements.
 
 Designed and tested on the **Steam Deck**. Free and open source under the MIT license. Developed by one person.
