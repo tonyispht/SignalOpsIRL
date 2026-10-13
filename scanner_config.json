@@ -430,7 +430,28 @@
       "suunto 9",
       "pebble",
       "ticwatch",
-      "mobvoi"
+      "mobvoi",
+      "forerunner",
+      "fenix",
+      "vivoactive",
+      "vivosmart",
+      "venu",
+      "instinct",
+      "epix",
+      "enduro",
+      "g-shock",
+      "gshock",
+      "huawei watch",
+      "honor watch",
+      "xiaomi watch",
+      "mi watch",
+      "oneplus watch",
+      "suunto",
+      "coros",
+      "tribit",
+      "xsound",
+      "xboom",
+      "wonderboom"
     ],
     "audio_wearables": [
       "g435",
@@ -603,7 +624,12 @@
       "powkiddy",
       "acer nitro blaze",
       "nitro blaze 8",
-      "nitro blaze 11"
+      "nitro blaze 11",
+      "stadia",
+      "quest 2",
+      "quest 3",
+      "quest 3s",
+      "quest pro"
     ],
     "music_instruments_pro_audio": [
       "specdrums",
@@ -717,7 +743,12 @@
       "tonies",
       "toniebox",
       "yoto",
-      "storyphones"
+      "storyphones",
+      "move hub",
+      "city hub",
+      "technic hub",
+      "prime hub",
+      "essential hub"
     ],
     "hacker_pentest": [
       "pineapple",
@@ -1036,7 +1067,14 @@
       "jl ble",
       "trane",
       "powerview",
-      "awox"
+      "awox",
+      "cc-rt-ble",
+      "cc-rt-m-ble",
+      "eqiva",
+      "eq-3",
+      "comet blue",
+      "gardena",
+      "rain bird"
     ],
     "networking_mesh": [
       "eero",
@@ -1130,7 +1168,33 @@
       "vantrue",
       "70mai",
       "nextbase",
-      "remote id"
+      "remote id",
+      "lelink",
+      "vlink",
+      "ios-vlink",
+      "icar pro",
+      "konnwei",
+      "kiwi 3",
+      "carlinkit",
+      "ottocast",
+      "aawireless",
+      "uconnect",
+      "handsfreelink",
+      "entune",
+      "alfa romeo",
+      "maserati",
+      "ferrari",
+      "lamborghini",
+      "bentley",
+      "rolls-royce",
+      "mclaren",
+      "aston martin",
+      "peugeot",
+      "citroen",
+      "renault",
+      "opel",
+      "fiat",
+      "mini cooper"
     ],
     "trackers_valuables": [
       "bixby tag",
@@ -1143,7 +1207,10 @@
       "moto tag",
       "eufy securitytrack",
       "key finder",
-      "item finder"
+      "item finder",
+      "itag",
+      "jio tag",
+      "nutale"
     ],
     "proximity_beacons": [
       "ibeacon",
@@ -1227,7 +1294,13 @@
       "philips sleepmapper",
       "zoll",
       "lifevest",
-      "beurer"
+      "beurer",
+      "eversense",
+      "twi board",
+      "qn-scale",
+      "fitindex",
+      "yolanda",
+      "etekcity"
     ],
     "industrial_logistics": [
       "zebra",
@@ -1429,7 +1502,17 @@
       "varia vue",
       "bontrager ion",
       "bontrager flare",
-      "icon ant module"
+      "icon ant module",
+      "motocaddy",
+      "livall",
+      "lumos helmet",
+      "wattbike",
+      "powertap",
+      "lezyne",
+      "magicshine",
+      "cycliq",
+      "knog",
+      "see sense"
     ],
     "pet_trackers": [
       "tractive",
@@ -2022,7 +2105,9 @@
       "friend pendant",
       "omi necklace",
       "omi devkit",
-      "sandbar stream ring"
+      "sandbar stream ring",
+      "even g1",
+      "even g2"
     ],
     "hobby_rc_drones": [
       "tinyhawk",
@@ -2353,7 +2438,103 @@
       "bakcou",
       "rambo bikes",
       "rambo ebike",
-      "rambo roamer"
+      "rambo roamer",
+      "e-scooter",
+      "escooter",
+      "e scooter",
+      "electric scooter",
+      "kick scooter",
+      "kickscooter",
+      "scooter",
+      "e-bike",
+      "ebike",
+      "e bike",
+      "electric bike",
+      "electric skateboard",
+      "eskate",
+      "e-skate",
+      "evse",
+      "miscooter",
+      "xiaomi electric scooter",
+      "mi electric scooter",
+      "niu",
+      "turboant",
+      "joyor",
+      "kukirin",
+      "inokim",
+      "mercane",
+      "wolf warrior",
+      "ausom",
+      "teverun",
+      "hover 1",
+      "swagtron",
+      "gyroor",
+      "jetson bolt",
+      "jetson rogue",
+      "jetson nova",
+      "jetson aero",
+      "leaperkim",
+      "extreme bull",
+      "boosted",
+      "exway",
+      "meepo",
+      "backfire",
+      "wowgo",
+      "maxfind",
+      "mellow drive",
+      "flipsky",
+      "trampa",
+      "evolve gtr",
+      "evolve bamboo",
+      "evolve carbon",
+      "evolve skateboards",
+      "kiox",
+      "nyon",
+      "purion",
+      "fazua",
+      "tq hpr50",
+      "tq hpr120",
+      "ebikemotion",
+      "mahle smartbike",
+      "brose",
+      "pinion",
+      "enviolo",
+      "e-tube",
+      "di2",
+      "axs",
+      "sram",
+      "turbo levo",
+      "turbo vado",
+      "turbo creo",
+      "turbo como",
+      "turbo kenevo",
+      "turbo tero",
+      "trek central",
+      "swytch",
+      "gocycle",
+      "brompton",
+      "velotric",
+      "heybike",
+      "fiido",
+      "engwe",
+      "himiway",
+      "jasion",
+      "gogoro",
+      "super soco",
+      "ola electric",
+      "ather",
+      "tvs iqube",
+      "iqube",
+      "chetak",
+      "livewire",
+      "energica",
+      "horwin",
+      "noodoe",
+      "easee",
+      "zaptec",
+      "pod point",
+      "maxicharger",
+      "teslawallconnector"
     ],
     "outdoor_offgrid_power": [
       "yaesu",
@@ -2431,7 +2612,18 @@
       "ecoflow",
       "jackery",
       "bluetti",
-      "victron"
+      "victron",
+      "smartshunt",
+      "smartsolar",
+      "bmv-712",
+      "bmv-702",
+      "blue smart",
+      "orion smart",
+      "smartlithium",
+      "lynx smart",
+      "phoenix smart",
+      "ctek",
+      "bt-th"
     ],
     "home_entertainment_av": [
       "siri remote",
@@ -2561,7 +2753,15 @@
       "audio pro",
       "crystal uhd",
       "uhd tv",
-      "[tv]"
+      "[tv]",
+      "alexa voice remote",
+      "voice remote",
+      "xr11",
+      "xr15",
+      "xr16",
+      "magic remote",
+      "google tv remote",
+      "soundbar"
     ],
     "hunting_trail_woods": [
       "trail cam",
@@ -2920,7 +3120,16 @@
       "covvi",
       "taska hand",
       "bioness",
-      "l300 go"
+      "l300 go",
+      "whill",
+      "permobil",
+      "invacare linx",
+      "quantum rehab",
+      "pride mobility",
+      "alber e-motion",
+      "e-motion m25",
+      "ottobock",
+      "ossur"
     ],
     "rural_farm_agriculture": [
       "allflex",
@@ -3551,7 +3760,7 @@
     "00:24:39": "Digital Barriers -- datafx/alpr_detector community list - unverified, not BLE-confirmed"
   },
   "_meta": {
-    "revised": "2026-10-11",
+    "revised": "2026-10-12",
     "notes": [
       "company_ids hold only IDs cross-checked against SIG-derived sources; the full SIG list (--update-db) is authoritative and wins over this file",
       "oui_confidence: alert | possible | info:<category>; used by scanner.py only. Flock OUIs other than B4:1E:52 are shared component-vendor prefixes = weak evidence",
@@ -3570,7 +3779,8 @@
       "2026-10-10 cleanup: (1) moved misfiled terms to the right panel (peripherals, music gear and toys got their own panels; smart locks/cameras -> security; camera brands -> cameras; telematics -> fleet; hearing aids -> accessibility; ham radios -> outdoor comms; pocket label/photo printers -> makers). (2) removed software/apps/protocols, company-only names, generic phrases, ordinary words that false-match, and gear that does not advertise a Bluetooth name (SDRs/probes, Wi-Fi/enterprise networking, QR/USB-only wallets and keys, USB mics, SSDs). (3) removed exact duplicates and every term already identified, with the same result, by a shorter term or by scanner.py's built-in rules (checked against the real classifier: no kept term changed category except the deliberate moves). (4) dropped the unused le_target_names list. Removed terms and reasons are in scanner_config_removed_terms.json.",
       "2026-10-10 research: added 18 community-list OUIs (Axon D8:1F:65, ShotSpotter, Digital Ally, VieVu, Utility, Zepcam, Genetec, Elsag...) to unverified_ouis only (NOT matched; mostly Wi-Fi/Ethernet prefixes, no BLE confirmation). Added alert name 'bwcdevice' (Axon body-cam advertising tag) and possible name ^fs-<hex> (Flock battery pack).",
       "vendor_categories: {category: [vendor names]} maps a SIG company / IEEE OUI owner to a category (plain text = whole word, 're:' = regex). It is the weakest evidence: any name, service or Apple/Microsoft rule beats it. The session report's 'Adv clues' column shows the company IDs and service UUIDs behind each device so you can write the next rules.",
-      "2026-10-11 round 4: service_rules for FCF1/FEF3 (Google), Fi collar (128-bit 57B40001…), Zebra FE79, Fitbit FD62; Fi collar name regex; TV terms (crystal uhd, uhd tv, [tv]) so Samsung TVs stop landing in smartphones."
+      "2026-10-11 round 4: service_rules for FCF1/FEF3 (Google), Fi collar (128-bit 57B40001…), Zebra FE79, Fitbit FD62; Fi collar name regex; TV terms (crystal uhd, uhd tv, [tv]) so Samsung TVs stop landing in smartphones.",
+      "2026-10-12 round 5b (e-mobility + gap fill): ev_micromobility gets the real advertised-name formats, not just brands: MIScooter####, Ninebot*/Segway* (no-space variants), Onewheel 'ow'+6 digits plus its 128-bit service E659F300…, KingSong KS-xx, Leaperkim LK#####, Bafang DPC244, Shimano E-TUBE/Di2 model codes, SRAM AXS, e-skateboards (Boosted/Exway/Meepo/Backfire/VESC), hoverboards, more e-bike drive systems and brands, electric motorcycles/scooters, more EV chargers, plus vendor_categories for SIG/IEEE owners (Shimano, SRAM, Ninebot, Segway, Bafang ...). Power wheelchairs/prosthetics went to accessibility_hearing_assistive, golf trolleys/smart helmets/cycling lights to fitness_gym. Gap fill elsewhere: Dexcom G6/G7 (Dexcom+2 / DXCM+2), Libre (ABBOTT+serial), Omnipod DASH (TWI BOARD), Omron BLESmart, A&D UA-651BLE, QN-Scale; SwitchBot Wo* names, SP110E/LEDnet/QHM LED controllers, ATC_xxxxxx thermometers, ThermoPro TPxxx, eQ-3/Comet Blue radiator valves; Victron Smart*/Renogy BT-TH; Garmin/Casio/Samsung Gear/Huawei Watch model families; OBD dongles (LELink/Vgate/Konnwei), more car brands, TV remotes, LEGO hubs, Quest/Stadia, Even G1. Many Shimano/Bafang/e-skate/EUC names are from community reverse-engineering and not verified against live captures; confirm with the 'Adv clues' column and trim what never shows up."
     ],
     "schema": {
       "categories": "{category_key: [terms]} - unknown keys automatically get a dashboard panel (icon/colour from category_meta or defaults)",
@@ -3785,7 +3995,13 @@
     "smart_iot": [
       "\\bgbk h\\d{3,4}[a-z0-9]?\\b",
       "\\bgvh\\d{4}\\b",
-      "^(?:pir|rol|vig|son|lum|gw\\d):[0-9a-f]{3,4}$"
+      "^(?:pir|rol|vig|son|lum|gw\\d):[0-9a-f]{3,4}$",
+      "\\bwo(?:hand|curtain|sensorth|contact|lock|presence|bulb|plug|strip|blindtilt|humidifier|meter)\\w*",
+      "\\bsp1\\d{2}e\\b",
+      "\\bqhm[- ]\\w+",
+      "\\bledne?t\\w*",
+      "^atc[ _][0-9a-f]{6}$",
+      "\\btp3\\d{2}[a-z]?\\b"
     ],
     "commercial_pos_retail": [
       "\\bet-\\d{4}\\b",
@@ -3799,6 +4015,26 @@
     ],
     "pet_trackers": [
       "^fi-m\\d{2}[a-z]\\d{4,}$"
+    ],
+    "ev_micromobility": [
+      "\\b(?:segway|ninebot)[a-z0-9]*",
+      "^ow\\d{6}$",
+      "^ks[- ]?(?:\\d{2}|[sf]\\d{2})[a-z]{0,2}$",
+      "^lk\\d{4,6}$",
+      "\\bdp ?c\\d{3}\\b",
+      "\\b(?:ew-(?:wu|en|sw|ex|ra|rs)\\d{3}|sc-e\\d{4}|bt-e\\d{4}|bm-e\\d{4}|(?:rd|fd)-(?:r|rx|m)\\d{3,4})\\b"
+    ],
+    "medical_health": [
+      "\\bdexcom[0-9a-z]{2}\\b",
+      "\\bdxcm[0-9a-z]{2}\\b",
+      "^abbott[0-9a-z]{6,}",
+      "^blesmart",
+      "\\b(?:ua|uc|ub|ut)-\\d{3}ble\\b"
+    ],
+    "wearables_audio": [
+      "\\bgear (?:s\\d|fit\\d?\\w*|sport|icon\\w*)",
+      "\\b(?:(?:gbd|gbx|gma|ecb)-?[a-z]?\\d{2,4}|(?:gmw|gw|gst|dw)-?[bh]\\d{3,4})\\w*",
+      "\\b(?:tat|shb)\\d{4}\\b"
     ]
   },
   "service_rules": {
@@ -3826,6 +4062,11 @@
       "wearables_audio",
       "Fitbit device",
       60
+    ],
+    "E659F300…": [
+      "ev_micromobility",
+      "Onewheel (Future Motion)",
+      80
     ]
   },
   "vendor_categories": {
@@ -3893,6 +4134,23 @@
     ],
     "auto_aerial": [
       "cambridge mobile telematics"
+    ],
+    "ev_micromobility": [
+      "shimano",
+      "sram",
+      "ninebot",
+      "segway",
+      "bafang",
+      "brose",
+      "niu",
+      "future motion",
+      "specialized bicycle",
+      "trek bicycle",
+      "giant manufacturing",
+      "gogoro",
+      "yadea",
+      "fazua",
+      "mahle"
     ]
   }
 }

@@ -34,6 +34,10 @@ Session complete: quitting shows a recap screen (time online, devices seen, XP e
 Mission mode: press y (with the inspector closed) for timed challenges such as "find 5 different vendors in 3 minutes". A countdown runs in the top bar; finishing in time pays
 XP and Intel Coins and counts toward quests, achievements and titles (missions_completed). Missions live in lookout_game.json ("missions").
 
+Device album: press # for a collection of every distinct device MODEL you have discovered (not every physical device), with a rarity tier based on how many of your
+sessions each one shows up in. It saves model names only to lookout_album.json: no MAC addresses, no locations, no owner names, and medical / assistive
+devices are skipped unless you pass --album-sensitive. --no-album turns it off, --album-stats prints a summary.
+
 Daily hooks (reasons to come back every day): a Daily Surge (bonus XP in your first minutes of scanning each day), Streak Shields that
 cover a missed day, a coin ladder on every streak day, Daily Caches (loot boxes for finishing quests), Weekly Ops with a Weekly Chest,
 and a Welcome Back bonus. All of it is tuned in the "retention" block of lookout_game.json.
@@ -105,6 +109,7 @@ CONFIG_FILE = "scanner_config.json"
 SETTINGS_FILE = "lookout_settings.json"
 CACHE_DIR = Path.home() / ".cache" / "lookout"
 ACTIVE_WINDOW = 5.0                         # seconds: "● live" vs "○ recent"
+TACTICAL_HOLD = 1800.0                      # seconds: ALERT / POSSIBLE devices stay listed this long after they were last heard (0 = vanish like every other device)
 
 # =============================================================================
 # HELPERS & SOUND NOTIFICATIONS
@@ -1206,6 +1211,8 @@ class Dev:
     counted: bool = False       # already counted in the "seen" total
     ghost_id: str = ""          # cross-MAC identity cluster this device is linked to (see ghost_link)
     peak: int = -127            # strongest raw RSSI seen this session
+    album_sig: tuple = ()       # (fingerprint, category, label, tier) last filed in the device album
+    album_key: str = ""         # album model this device was filed under ("" = not collected)
 
 DEVICES: dict[str, Dev] = {}
 SEEN: set = set()
@@ -1244,6 +1251,7 @@ FP_INDEX: dict[tuple, list] = {}       # fp -> [ghost_id, ...]; several physical
 GHOST_ROTATION_WINDOW = 20 * 60        # seconds; private addresses typically rotate every ~15 min
 GHOST_RSSI_SLOP = 18                   # dB; max plausible jump between the old MAC's last reading and the new MAC's first
 GHOST_STALE = 3600.0                   # seconds; drop ghosts nothing has matched against in an hour
+ROTATION_STATUS = False                # True = show a "Probable MAC rotation" message on the status line each time an address change is linked (it happens a lot). Rotations are still counted, shown in the MAC Rotation view and in the session report either way.
 
 FINDMY_RSSI_SLOP = 12                  # dB; tighter than other devices because every AirTag shares one fingerprint
 FINDMY_LIVE_S = 10.0                   # seconds; a cluster address heard this recently is still in use, so a new address is a different tag
@@ -1297,9 +1305,11 @@ def ghost_link(dev: "Dev", now: float):
         ghost.last, ghost.last_rssi = now, dev.ema
         dev.ghost_id = best
         game_on_rotation()
-        STATUS.set(f"Probable MAC rotation: {dev.mac} linked to ghost #{best} "
-                    f"({ghost.rotations} rotation{'s' if ghost.rotations != 1 else ''} tracked)")
-        play_notification_sound()
+        if ROTATION_STATUS:
+            STATUS.set(f"Probable MAC rotation: {dev.mac} linked to ghost #{best} "
+                       f"({ghost.rotations} rotation{'s' if ghost.rotations != 1 else ''} tracked)")
+        if ROTATION_STATUS:
+            play_notification_sound()      # silent by default: an address change isn't a new device
         return
 
     gid = hashlib.sha1(f"{fp!r}|{dev.mac}|{now}".encode()).hexdigest()[:8]
@@ -1352,6 +1362,8 @@ CFG = {
     "show_profile": False,   # Toggled via shortcut 'p' (player profile)
     "show_tutorial": False,  # Toggled via shortcut 'b' (guide / tutorial)
     "show_missions": False,  # Toggled via shortcut 'y' (mission board; while the inspector is open, y connects to the device instead)
+    "show_album": False,     # Toggled via shortcut '#' (device album: every model you have discovered, with rarity)
+    "show_settings": False,  # Toggled via shortcut ',' (settings screen: change every saved setting in-game)
     "classic": False,        # Toggled via shortcut 'k' (classic Bluetooth discovery)
     "boot": True,            # play the fake boot sequence at launch (--no-boot / --boot, or "boot" in lookout_settings.json)
     "boot_sound": True,      # the boot sequence plays the intro sound
@@ -1639,7 +1651,9 @@ def on_detect(device, adv):
         sens = decode_sensor(name, mfg, adv.service_data or {})
         if sens:
             sens["t"] = now
-            dev.sensor = sens
+            # a beacon-only packet (e.g. the iBeacon a Govee thermometer also sends) must not replace a recent real reading
+            if not (sens.get("beacon") and dev.sensor and not dev.sensor.get("beacon") and now - dev.sensor["t"] < 120):
+                dev.sensor = sens
     uuids = {short_uuid(u) for u in (adv.service_uuids or [])} | {short_uuid(u) for u in (adv.service_data or {})}
     fp = make_fp(name, mfg, uuids)
     announced = False
@@ -1700,11 +1714,14 @@ def meter(dev: Dev, now: float, style: str):
 # =============================================================================
 # SENSOR DECODER
 # Many cheap sensors broadcast their readings in the open, so no connection is needed. Formats decoded:
-#   BTHome v2 (service data 0xFCD2, unencrypted)     temperature, humidity, pressure, light, CO2, battery, door/motion ...
+#   BTHome v2 (service data 0xFCD2, unencrypted)     temperature, humidity, pressure, light, CO2, battery, door/motion, buttons ...
 #   ATC1441 / PVVX custom Xiaomi thermometers (0x181A) temperature, humidity, battery
-#   Ruuvi RAWv2 (manufacturer 0x0499, format 5)        temperature, humidity, pressure, motion, battery
-#   Govee H5074 / H5075 / H5072 (manufacturer 0xEC88)  temperature, humidity, battery
-# Encrypted broadcasts (BTHome with encryption, Xiaomi MiBeacon) cannot be read and are simply left alone.
+#   Ruuvi RAWv1 + RAWv2 (manufacturer 0x0499)          temperature, humidity, pressure, motion, battery
+#   Govee (manufacturer 0xEC88 and friends, by payload) H5072/H5075/H5074/H5051/H5052/H5071/H5101/H5102/H5104/H5105/H5108/
+#                                                       H5110/H5174/H5177/H5178/H5179, H5106 (PM2.5), H5140 (CO2), H5127, BBQ probes
+#   SwitchBot Meter / Meter Plus (service data 0xFD3D) temperature, humidity, battery
+#   Eddystone UID / URL / TLM (service data 0xFEAA) and iBeacon (Apple 0x004C): beacons, listed with their IDs
+# Encrypted broadcasts (BTHome with encryption, Xiaomi MiBeacon, Govee H512x) cannot be read and are simply left alone.
 # =============================================================================
 SENSOR_TEMP_UNIT = "F"          # "F" or "C": how temperatures are shown
 SENSOR_STALE = 300.0            # seconds a sensor stays listed in the Sensors view after it was last heard
@@ -1718,28 +1735,46 @@ def fmt_temp(c: float) -> str:
 def _i(b: bytes, o: int, n: int, signed=False, big=False) -> int:
     return int.from_bytes(b[o:o + n], "big" if big else "little", signed=signed)
 
-# id: (label, bytes, signed, factor, unit)
+# id: (label, bytes, signed, factor, unit)   (BTHome v2 object table, https://bthome.io/format/)
 BTHOME_NUM = {
     0x01: ("Battery", 1, False, 1, "%"), 0x02: ("Temp", 2, True, 0.01, "C"), 0x03: ("Humidity", 2, False, 0.01, "%"),
-    0x04: ("Pressure", 3, False, 0.01, " hPa"), 0x05: ("Light", 3, False, 0.01, " lx"), 0x08: ("Dew point", 2, True, 0.01, "C"),
-    0x0B: ("Power", 3, False, 0.01, " W"), 0x0C: ("Voltage", 2, False, 0.001, " V"), 0x0D: ("PM2.5", 2, False, 1, " µg/m³"),
-    0x0E: ("PM10", 2, False, 1, " µg/m³"), 0x12: ("CO₂", 2, False, 1, " ppm"), 0x13: ("TVOC", 2, False, 1, " µg/m³"),
-    0x14: ("Moisture", 2, False, 0.01, "%"), 0x2E: ("Humidity", 1, False, 1, "%"), 0x2F: ("Moisture", 1, False, 1, "%"),
-    0x43: ("Current", 2, False, 0.001, " A"), 0x45: ("Temp", 2, True, 0.1, "C"), 0x46: ("UV index", 1, False, 0.1, ""),
+    0x04: ("Pressure", 3, False, 0.01, " hPa"), 0x05: ("Light", 3, False, 0.01, " lx"), 0x06: ("Mass", 2, False, 0.01, " kg"),
+    0x07: ("Mass", 2, False, 0.01, " lb"), 0x08: ("Dew point", 2, True, 0.01, "C"), 0x09: ("Count", 1, False, 1, ""),
+    0x0A: ("Energy", 3, False, 0.001, " kWh"), 0x0B: ("Power", 3, False, 0.01, " W"), 0x0C: ("Voltage", 2, False, 0.001, " V"),
+    0x0D: ("PM2.5", 2, False, 1, " µg/m³"), 0x0E: ("PM10", 2, False, 1, " µg/m³"), 0x12: ("CO₂", 2, False, 1, " ppm"),
+    0x13: ("TVOC", 2, False, 1, " µg/m³"), 0x14: ("Moisture", 2, False, 0.01, "%"), 0x2E: ("Humidity", 1, False, 1, "%"),
+    0x2F: ("Moisture", 1, False, 1, "%"), 0x3D: ("Count", 2, False, 1, ""), 0x3E: ("Count", 4, False, 1, ""),
+    0x3F: ("Rotation", 2, True, 0.1, "°"), 0x40: ("Distance", 2, False, 1, " mm"), 0x41: ("Distance", 2, False, 0.1, " m"),
+    0x42: ("Duration", 3, False, 0.001, " s"), 0x43: ("Current", 2, False, 0.001, " A"), 0x44: ("Speed", 2, False, 0.01, " m/s"),
+    0x45: ("Temp", 2, True, 0.1, "C"), 0x46: ("UV index", 1, False, 0.1, ""), 0x47: ("Volume", 2, False, 0.1, " L"),
+    0x48: ("Volume", 2, False, 1, " mL"), 0x49: ("Flow rate", 2, False, 0.001, " m³/h"), 0x4A: ("Voltage", 2, False, 0.1, " V"),
+    0x4B: ("Gas", 3, False, 0.001, " m³"), 0x4C: ("Gas", 4, False, 0.001, " m³"), 0x4D: ("Energy", 4, False, 0.001, " kWh"),
+    0x4E: ("Volume", 4, False, 0.001, " L"), 0x4F: ("Water", 4, False, 0.001, " L"), 0x51: ("Acceleration", 2, False, 0.001, " m/s²"),
+    0x52: ("Gyroscope", 2, False, 0.001, " °/s"), 0x55: ("Volume", 4, False, 0.001, " L"), 0x56: ("Conductivity", 2, False, 1, " µS/cm"),
+    0x57: ("Temp", 1, True, 1, "C"), 0x58: ("Temp", 1, True, 0.35, "C"), 0x59: ("Count", 1, True, 1, ""),
+    0x5A: ("Count", 2, True, 1, ""), 0x5B: ("Count", 4, True, 1, ""), 0x5C: ("Power", 4, True, 0.01, " W"),
+    0x5D: ("Current", 2, True, 0.001, " A"), 0x5E: ("Direction", 2, False, 0.01, "°"), 0x60: ("Channel", 1, False, 1, ""),
+    0x61: ("Rotation speed", 2, False, 1, " rpm"), 0x63: ("Acceleration", 4, True, 0.000001, " m/s²"),
 }
 BTHOME_BOOL = {
     0x0F: ("Generic", "off", "on"), 0x10: ("Power", "off", "on"), 0x11: ("Opening", "closed", "OPEN"),
     0x15: ("Battery", "ok", "LOW"), 0x16: ("Charging", "no", "yes"), 0x17: ("CO", "clear", "DETECTED"),
-    0x1A: ("Door", "closed", "OPEN"), 0x1C: ("Gas", "clear", "DETECTED"), 0x1F: ("Lock", "locked", "UNLOCKED"),
-    0x20: ("Moisture", "dry", "WET"), 0x21: ("Motion", "clear", "MOTION"), 0x22: ("Moving", "no", "yes"),
-    0x23: ("Occupancy", "clear", "OCCUPIED"), 0x25: ("Presence", "away", "home"), 0x29: ("Smoke", "clear", "SMOKE"),
-    0x2B: ("Tamper", "clear", "TAMPER"), 0x2D: ("Window", "closed", "OPEN"),
+    0x18: ("Cold", "normal", "COLD"), 0x19: ("Connected", "no", "yes"), 0x1A: ("Door", "closed", "OPEN"),
+    0x1B: ("Garage door", "closed", "OPEN"), 0x1C: ("Gas", "clear", "DETECTED"), 0x1D: ("Heat", "normal", "HOT"),
+    0x1E: ("Light", "dark", "LIGHT"), 0x1F: ("Lock", "locked", "UNLOCKED"), 0x20: ("Moisture", "dry", "WET"),
+    0x21: ("Motion", "clear", "MOTION"), 0x22: ("Moving", "no", "yes"), 0x23: ("Occupancy", "clear", "OCCUPIED"),
+    0x24: ("Plug", "unplugged", "plugged in"), 0x25: ("Presence", "away", "home"), 0x26: ("Problem", "ok", "PROBLEM"),
+    0x27: ("Running", "no", "yes"), 0x28: ("Safety", "unsafe", "safe"), 0x29: ("Smoke", "clear", "SMOKE"),
+    0x2A: ("Sound", "clear", "SOUND"), 0x2B: ("Tamper", "off", "TAMPER"), 0x2C: ("Vibration", "clear", "VIBRATION"),
+    0x2D: ("Window", "closed", "OPEN"),
 }
+BTHOME_BUTTON = {0: "none", 1: "press", 2: "double press", 3: "triple press", 4: "long press", 5: "long double press",
+                 6: "long triple press", 0x80: "hold"}
 
 def _num_text(label: str, val: float, unit: str) -> str:
     if unit == "C":
         return fmt_temp(val)
-    return f"{val:.2f}".rstrip("0").rstrip(".") + unit
+    return f"{val:.6f}".rstrip("0").rstrip(".") + unit
 
 def decode_bthome(data: bytes):
     if len(data) < 2:
@@ -1766,8 +1801,29 @@ def decode_bthome(data: bytes):
             label, off, on = BTHOME_BOOL[oid]
             vals.append((label, on if data[i] else off))
             i += 1
+        elif oid == 0x3A and i < len(data):           # button event
+            vals.append(("Button", BTHOME_BUTTON.get(data[i], f"event {data[i]}")))
+            i += 1
+        elif oid == 0x3C and i + 1 < len(data):       # dimmer event: type, steps
+            vals.append(("Dimmer", ("rotate left" if data[i] == 1 else "rotate right" if data[i] == 2 else "none")
+                         + (f" {data[i + 1]} steps" if data[i] else "")))
+            i += 2
+        elif oid in (0x53, 0x54) and i < len(data):   # text / raw: length byte first
+            n = data[i]
+            chunk = data[i + 1:i + 1 + n]
+            if oid == 0x53:
+                vals.append(("Text", chunk.decode("utf-8", "replace")[:40]))
+            else:
+                vals.append(("Raw", chunk.hex()[:32]))
+            i += 1 + n
+        elif oid == 0xF0:                             # device type id (uint16)
+            i += 2
+        elif oid == 0xF1:                             # firmware version (uint32)
+            i += 4
+        elif oid == 0xF2:                             # firmware version (uint24)
+            i += 3
         else:
-            break                                     # unknown object: its length is unknown, so stop here
+            break                                     # unknown object: its length is unknown, so stop here (as the spec says)
     return {"fmt": "BTHome v2", "vals": vals} if vals else None
 
 def decode_atc(data: bytes):
@@ -1782,6 +1838,16 @@ def decode_atc(data: bytes):
     return None
 
 def decode_ruuvi(data: bytes):
+    if len(data) >= 14 and data[0] == 3:              # RAWv1 (format 3): humidity, temp, pressure, accel, battery
+        t = (data[2] & 0x7F) + data[3] / 100
+        if data[2] & 0x80:
+            t = -t
+        acc = [_i(data, o, 2, True, True) for o in (6, 8, 10)]
+        return {"fmt": "Ruuvi RAWv1", "vals": [
+            ("Temp", fmt_temp(t)), ("Humidity", f"{data[1] * 0.5:.1f}%"),
+            ("Pressure", f"{(_i(data, 4, 2, False, True) + 50000) / 100:.1f} hPa"),
+            ("Accel (mg)", f"x {acc[0]} · y {acc[1]} · z {acc[2]}"),
+            ("Battery", f"{_i(data, 12, 2, False, True) / 1000:.3f} V")]}
     if len(data) < 24 or data[0] != 5:
         return None
     vals = []
@@ -1804,23 +1870,197 @@ def decode_ruuvi(data: bytes):
         vals.append(("Movements", str(data[15])))
     return {"fmt": "Ruuvi RAWv2", "vals": vals}
 
-def decode_govee(name: str, data: bytes):
-    n = name.lower()
-    if "5074" in n and len(data) >= 6:
-        return {"fmt": "Govee H5074", "vals": [
-            ("Temp", fmt_temp(_i(data, 1, 2, True) / 100)), ("Humidity", f"{_i(data, 3, 2) / 100:.1f}%"),
-            ("Battery", f"{data[5]}%")]}
-    if ("5075" in n or "5072" in n) and len(data) >= 5:
-        v = _i(data, 1, 3, False, True)
-        neg = bool(v & 0x800000)
-        v &= 0x7FFFFF
-        temp = int(v / 1000) / 10 * (-1 if neg else 1)
-        return {"fmt": "Govee H5075/H5072", "vals": [
-            ("Temp", fmt_temp(temp)), ("Humidity", f"{(v % 1000) / 10:.1f}%"), ("Battery", f"{data[4]}%")]}
+# ---- Govee --------------------------------------------------------------------------------------------------------
+# Govee thermometers are identified the way Home Assistant's govee-ble does it: by manufacturer ID plus payload length,
+# NOT by the device name. The name is often missing (it can live in a scan response that has not arrived yet), and
+# the H5074 / H5075 readings are only sent in the scan response, so waiting for a model number in the name meant most
+# Govee sensors were never decoded. The name, when present, still picks the model label.
+GOVEE_SKIP = {0x004C}                                  # Apple: the iBeacon block Govee thermometers also carry
+GOVEE_ID = 0xEC88                                      # Govee / Shenzhen Intellirocks company ID
+GOVEE_NAME_RX = re.compile(r"(?:H|B|GV|GVH)(?:51\d\d|507[1245]|505[12])", re.I)   # sensor-like names (for the 'unrecognised' row)
+GOVEE_PROBE_MFG = {                                    # BBQ probe thermometers: (company IDs, payload length)
+    "H5181": ({0xF861, 0x388A, 0xEA42, 0xAAA2, 0xD14B}, 14), "H5183": ({0x67DD, 0xE02F, 0xF79F}, 14),
+    "H5182": ({0x2730}, 17), "H5184": ({0x1B36}, 17), "H5185": ({0x4A32, 0x0332, 0x4C32}, 20),
+    "H5191": ({0xAC63}, 20), "H5198": ({0x3022}, 20),
+}
+
+def _govee_th3(b: bytes):
+    """Govee packs temperature and humidity in 3 bytes: temp*10 and humidity*10 side by side, top bit = negative."""
+    v = int.from_bytes(b[:3], "big")
+    neg = bool(v & 0x800000)
+    v &= 0x7FFFFF
+    t = int(v / 1000) / 10.0
+    return (-t if neg else t), (v % 1000) / 10.0
+
+def _govee_th_vals(t, h, batt=None, err=False, label=""):
+    sfx = f" {label}" if label else ""
+    if err or not (-40 <= t <= 100) or not (0 <= h <= 100):
+        vals = [("Temp" + sfx, "error"), ("Humidity" + sfx, "error")]
+    else:
+        vals = [("Temp" + sfx, fmt_temp(t)), ("Humidity" + sfx, f"{h:.1f}%")]
+    if batt is not None:
+        vals.append(("Battery", f"{batt}%"))
+    return vals
+
+def _govee_sane(t, h, batt=None) -> bool:
+    return -40 <= t <= 100 and 0 <= h <= 100 and (batt is None or batt <= 100)
+
+def _govee_probe(v: int) -> str:
+    return "n/a" if v < 0 else fmt_temp(v / 100)
+
+def decode_govee(name: str, mfg: dict):
+    n = (name or "").upper()
+    for mid, raw in mfg.items():
+        if mid in GOVEE_SKIP:
+            continue
+        data = bytes(raw)
+        if len(data) > 25 and b"INTELLI_ROCKS" in data:
+            data = data[:-25]                          # the name sometimes ends up glued onto the end of the data
+        L = len(data)
+        # H5127 presence sensor
+        if L == 6 and data[:4] in (b"\xec\x00\x01\x01", b"\xec\x00\x02\x01") and ("H5127" in n or (not n and mid in (0x8803, 0x8843))):
+            return {"fmt": "Govee H5127", "vals": [("Presence", "PRESENT" if data[4] == 1 else "clear"),
+                                                    ("Motion", "MOTION" if data[5] == 17 else "clear")]}
+        # H5072 / H5075 / H5129: temp+humidity in bytes 1-3, battery in byte 4 (top bit = error flag)
+        if L == 6 and (mid == GOVEE_ID or any(m in n for m in ("H5072", "H5075", "H5129"))):
+            t, h = _govee_th3(data[1:4])
+            model = next((m for m in ("H5072", "H5075", "H5129") if m in n), "H5072/H5075")
+            return {"fmt": f"Govee {model}", "vals": _govee_th_vals(t, h, data[4] & 0x7F, bool(data[4] & 0x80))}
+        # H5106 air quality
+        if L == 6 and "H5106" in n:
+            v = int.from_bytes(data[2:6], "big")
+            neg = bool(v & 0x80000000)
+            v &= 0x7FFFFFFF
+            t = int(v / 1000000) / 10.0
+            return {"fmt": "Govee H5106", "vals": [("Temp", fmt_temp(-t if neg else t)),
+                    ("Humidity", f"{int((v % 1000000) / 1000) / 10:.1f}%"), ("PM2.5", f"{v % 1000} µg/m³")]}
+        # H5140 CO2 monitor
+        if L == 8 and "5140" in n:
+            t, h = _govee_th3(data[2:5])
+            return {"fmt": "Govee H5140", "vals": _govee_th_vals(t, h, None, bool(data[7])) + [("CO₂", f"{_i(data, 5, 2, False, True)} ppm")]}
+        # H5112 dual-probe
+        if L == 8 and ("5112" in n):
+            probe = {0x41: 1, 0x82: 2}.get(data[7])
+            if probe:
+                t, h = _govee_th3(data[2:5])
+                return {"fmt": "Govee H5112", "vals": _govee_th_vals(t, h, data[5] & 0x7F, bool(data[5] & 0x80), f"probe {probe}")}
+        # H5100 / H5101 / H5102 / H5103 / H5104 / H5105 / H5108 / H5110 / H5174 / H5177 / GV5179 (data bytes 2-5)
+        names51 = ("H5108", "H5100", "H5101", "H5102", "H5103", "H5104", "H5105", "H5174", "H5177", "H5110", "GV5179")
+        by_name = next((m for m in names51 if m in n), None)
+        if L in (6, 8) and (by_name or (mid == 0x0001 and L == 8)):
+            t, h = _govee_th3(data[2:5])
+            batt, err = data[5] & 0x7F, bool(data[5] & 0x80)
+            if not by_name and not _govee_sane(t, h, batt):
+                continue
+            model = "H5108" if (by_name == "H5108" or L == 8) else (by_name or "H5101/H5102")
+            return {"fmt": f"Govee {model}", "vals": _govee_th_vals(t, h, batt, err)}
+        # H5074 (7 bytes): temp and humidity as little-endian int16 / 100, battery byte
+        if L == 7 and (mid == GOVEE_ID or "H5074" in n):
+            return {"fmt": "Govee H5074", "vals": [("Temp", fmt_temp(_i(data, 1, 2, True) / 100)),
+                    ("Humidity", f"{_i(data, 3, 2) / 100:.1f}%"), ("Battery", f"{data[5]}%")]}
+        # H5051 / H5052 / H5071 (9 bytes, same layout as H5074)
+        if L == 9 and (mid == GOVEE_ID or any(m in n for m in ("H5051", "H5052", "H5071"))):
+            model = next((m for m in ("H5071", "H5052") if m in n), "H5051")
+            return {"fmt": f"Govee {model}", "vals": [("Temp", fmt_temp(_i(data, 1, 2, True) / 100)),
+                    ("Humidity", f"{_i(data, 3, 2) / 100:.1f}%"), ("Battery", f"{data[5]}%")]}
+        # H5178 with a remote sensor (9 bytes, company ID 1)
+        if L == 9 and ("H5178" in n or "B5178" in n or mid == 0x0001):
+            t, h = _govee_th3(data[3:6])
+            batt, err = data[6] & 0x7F, bool(data[6] & 0x80)
+            if "5178" not in n and not _govee_sane(t, h, batt):
+                continue
+            remote = data[2] == 1
+            return {"fmt": "Govee H5178" + (" remote" if remote else ""), "vals": _govee_th_vals(t, h, batt, err)}
+        # H5179 (9 bytes)
+        if L == 9 and ("H5179" in n or mid == 0x8801):
+            t, h, batt = _i(data, 4, 2, True) / 100, _i(data, 6, 2) / 100, data[8]
+            if "H5179" not in n and not _govee_sane(t, h, batt):
+                continue
+            return {"fmt": "Govee H5179", "vals": _govee_th_vals(t, h, batt)}
+        # BBQ probe thermometers
+        for model, (ids, plen) in GOVEE_PROBE_MFG.items():
+            if L == plen and (model in n or mid in ids):
+                be = lambda o: _i(data, o, 2, True, True)
+                if model in ("H5181", "H5183"):
+                    vals = [("Probe 1", _govee_probe(be(8))), ("Alarm 1", _govee_probe(be(10)))]
+                elif model in ("H5182", "H5184"):
+                    ids_ = {1: (1, 2), 65: (1, 2), 129: (1, 2), 193: (1, 2), 2: (3, 4), 66: (3, 4), 130: (3, 4), 194: (3, 4)}.get(data[6], (1, 2)) if model == "H5184" else (1, 2)
+                    vals = [(f"Probe {ids_[0]}", _govee_probe(be(8))), (f"Alarm {ids_[0]}", _govee_probe(be(10))),
+                            (f"Probe {ids_[1]}", _govee_probe(be(13))), (f"Alarm {ids_[1]}", _govee_probe(be(15)))]
+                elif model == "H5185":
+                    vals = [("Probe 1", _govee_probe(be(8))), ("Alarm 1", _govee_probe(be(10))),
+                            ("Probe 2", _govee_probe(be(14))), ("Alarm 2", _govee_probe(be(16)))]
+                elif model == "H5191":
+                    vals = [("Probe 1", _govee_probe(be(8))), ("Alarm 1", _govee_probe(be(10))), ("Temp", fmt_temp(be(14) / 100))]
+                else:                                   # H5198
+                    ids_ = {1: (1, 2), 65: (1, 2), 129: (1, 2), 193: (1, 2), 2: (3, 4), 66: (3, 4), 130: (3, 4), 194: (3, 4)}.get(data[6], (1, 2))
+                    vals = [(f"Probe {ids_[0]}", _govee_probe(be(8))), (f"Alarm {ids_[0]}", _govee_probe(be(10))),
+                            (f"Probe {ids_[1]}", _govee_probe(be(14))), (f"Alarm {ids_[1]}", _govee_probe(be(16)))]
+                return {"fmt": f"Govee {model}", "vals": vals}
+    # Looks like a Govee thermometer by name but the payload is in a format we don't know yet: show it raw so it can be added.
+    if GOVEE_NAME_RX.search(n):
+        for mid, raw in mfg.items():
+            if mid not in GOVEE_SKIP:
+                return {"fmt": "Govee (unrecognised)", "vals": [("Payload", f"0x{mid:04X} {bytes(raw).hex()}")]}
     return None
 
+# ---- SwitchBot Meter / Meter Plus (service data 0xFD3D) -----------------------------------------------------------
+def decode_switchbot(data: bytes):
+    if len(data) < 6:
+        return None
+    model = data[0] & 0x7F
+    if model not in (0x54, 0x69):                       # 'T' Meter, 'i' Meter Plus
+        return None
+    temp = (data[4] & 0x7F) + (data[3] & 0x0F) / 10
+    if not data[4] & 0x80:
+        temp = -temp
+    return {"fmt": "SwitchBot Meter" + (" Plus" if model == 0x69 else ""), "vals": [
+        ("Temp", fmt_temp(temp)), ("Humidity", f"{data[5] & 0x7F}%"), ("Battery", f"{data[2] & 0x7F}%")]}
+
+# ---- Beacons ---------------------------------------------------------------------------------------------------------
+EDDY_SCHEME = {0: "http://www.", 1: "https://www.", 2: "http://", 3: "https://"}
+EDDY_EXPAND = {0: ".com/", 1: ".org/", 2: ".edu/", 3: ".net/", 4: ".info/", 5: ".biz/", 6: ".gov/",
+               7: ".com", 8: ".org", 9: ".edu", 10: ".net", 11: ".info", 12: ".biz", 13: ".gov"}
+
+def _s8(v: int) -> int:
+    return v - 256 if v > 127 else v
+
+def decode_eddystone(data: bytes):
+    if not data:
+        return None
+    ft = data[0] & 0xF0
+    if ft == 0x00 and len(data) >= 18:                 # UID: tx power, 10-byte namespace, 6-byte instance
+        return {"fmt": "Eddystone UID", "beacon": True, "vals": [
+            ("Namespace", data[2:12].hex()), ("Instance", data[12:18].hex()), ("Tx power", f"{_s8(data[1])} dBm")]}
+    if ft == 0x10 and len(data) >= 4:                  # URL: tx power, scheme, encoded url
+        url = EDDY_SCHEME.get(data[2], "")
+        for c in data[3:]:
+            url += EDDY_EXPAND.get(c, chr(c) if 32 <= c < 127 else "?")
+        return {"fmt": "Eddystone URL", "beacon": True, "vals": [("URL", url), ("Tx power", f"{_s8(data[1])} dBm")]}
+    if ft == 0x20 and len(data) >= 14 and data[1] == 0:  # TLM: battery mV, temp (8.8 fixed), adv count, uptime (0.1 s)
+        vals = []
+        mv, tr = _i(data, 2, 2, False, True), _i(data, 4, 2, True, True)
+        if mv:
+            vals.append(("Battery", f"{mv / 1000:.2f} V"))
+        if tr != -32768:
+            vals.append(("Temp", fmt_temp(tr / 256)))
+        vals.append(("Adverts sent", str(_i(data, 6, 4, False, True))))
+        vals.append(("Uptime", fmt_dur(_i(data, 10, 4, False, True) / 10, True)))
+        return {"fmt": "Eddystone TLM", "vals": vals}
+    return None
+
+def decode_ibeacon(data: bytes):
+    """Apple iBeacon (Apple company ID 0x004C, type 0x02 length 0x15): UUID, major, minor, calibrated Tx power."""
+    if len(data) < 23 or data[0] != 0x02 or data[1] != 0x15:
+        return None
+    u = data[2:18].hex()
+    return {"fmt": "iBeacon", "beacon": True, "vals": [
+        ("UUID", f"{u[:8]}-{u[8:12]}-{u[12:16]}-{u[16:20]}-{u[20:]}"), ("Major", str(_i(data, 18, 2, False, True))),
+        ("Minor", str(_i(data, 20, 2, False, True))), ("Tx @1m", f"{_s8(data[22])} dBm")]}
+
 def decode_sensor(name: str, mfg: dict, sd: dict):
-    """Return {'fmt', 'vals': [(label, text)], 'summary'} for a recognised sensor broadcast, else None."""
+    """Return {'fmt', 'vals': [(label, text)], 'summary'} for a recognised sensor or beacon broadcast, else None.
+    Sensors win over beacons: a Govee thermometer also broadcasts an iBeacon block."""
     res = None
     try:
         if sd:
@@ -1831,17 +2071,27 @@ def decode_sensor(name: str, mfg: dict, sd: dict):
                 b = _svc(sd, 0x181A)
                 if b is not None:
                     res = decode_atc(bytes(b))
+            if res is None:
+                b = _svc(sd, 0xFD3D)
+                if b is not None:
+                    res = decode_switchbot(bytes(b))
         if res is None and mfg:
             if 0x0499 in mfg:
                 res = decode_ruuvi(bytes(mfg[0x0499]))
-            elif 0xEC88 in mfg:
-                res = decode_govee(name or "", bytes(mfg[0xEC88]))
+            if res is None:
+                res = decode_govee(name or "", mfg)
+        if res is None and sd:
+            b = _svc(sd, 0xFEAA)
+            if b is not None:
+                res = decode_eddystone(bytes(b))
+        if res is None and mfg and 0x004C in mfg:
+            res = decode_ibeacon(bytes(mfg[0x004C]))
     except Exception:
         return None
     if res is None:
         return None
     vals = res["vals"]
-    main = [v for k, v in vals if k not in ("Battery", "Accel (mg)", "Movements", "Dew point")][:2]
+    main = [v for k, v in vals if k not in ("Battery", "Accel (mg)", "Movements", "Dew point", "Tx power", "Tx @1m")][:2]
     batt = next((v for k, v in vals if k == "Battery"), "")
     res["summary"] = " ".join(main) + (f" 🔋{batt.split(' ')[0]}" if batt else "")
     if res["fmt"].endswith("(encrypted)"):
@@ -1922,12 +2172,36 @@ def flash_style(dev, now: float, base: str):
         return "bold bright_cyan", True
     return base, True
 
+def short_age(sec: float) -> str:
+    """Very short 'time since last heard' for narrow status cells: 12s, 3m, 1h05."""
+    s = max(0, int(sec))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    return f"{s // 3600}h{(s % 3600) // 60:02d}"
+
+def held(dev, now: float) -> bool:
+    """True for an ALERT / POSSIBLE device that is out of range right now but still listed because of TACTICAL_HOLD."""
+    return now - dev.last > CFG["stale"] and dev.ident.tier in ("alert", "possible")
+
+def seen_ago(dev, now: float) -> str:
+    """'now' while it is being heard, otherwise how long ago it was last heard (45s ago, 3m 05s ago)."""
+    age = now - dev.last
+    return "now" if age <= ACTIVE_WINDOW else fmt_dur(age) + " ago"
+
+def live_tier_devs(devs, now: float) -> list:
+    """Only the devices in range right now, so a held (out of range) flagged device doesn't keep a border pulsing."""
+    return [d for d in devs if not held(d, now)]
+
 def status_text(dev, now: float, live: bool) -> Text:
-    """'● LIVE' / '○ RECENT' status cell, or a blinking '✦ NEW' for the first couple of seconds."""
+    """'● LIVE' or '○ 12s' (time since it was last heard), or a blinking '✦ NEW' for the first couple of seconds."""
     _, fresh = flash_style(dev, now, "")
     if fresh and now - dev.first < 1.9:
         return Text("✦ NEW", style="bold black on bright_white" if int((now - dev.first) / 0.2) % 2 == 0 else "bold bright_white")
-    return Text("● LIVE" if live else "○ RECENT", style="bright_green" if live else "dim")
+    if live:
+        return Text("● LIVE", style="bright_green")
+    return Text("○ " + short_age(now - dev.last), style="dim")
 
 # ---- alert pulse -----------------------------------------------------------
 def worst_tier(devs) -> str:
@@ -2738,10 +3012,15 @@ def flood_note(max_names: int = 3) -> str:
     txt = ", ".join(f"{n} +{c}" for n, c in top) + (f", +{more} more names" if more > 0 else "")
     return f"{sum(FLOOD_HIDDEN.values())} weaker repeats hidden ({txt}) · d shows all"
 
-def get_processed_devices(now, flood=True):
+def get_processed_devices(now, flood=True, hold=False):
     """Filters stale devices and optionally deduplicates/collapses rotating MACs.
-    flood=False skips the repeated-name collapsing (used by the stats counts)."""
-    active = [d for d in DEVICES.values() if now - d.last <= CFG["stale"] and passes_signal(d, now)]
+    flood=False skips the repeated-name collapsing (used by the stats counts).
+    hold=True also keeps ALERT / POSSIBLE devices for TACTICAL_HOLD seconds after they were last heard (list views only;
+    counts, radar and stats leave it off so they only ever see what is in range now)."""
+    active = [d for d in DEVICES.values()
+              if (now - d.last <= CFG["stale"]
+                  or (hold and TACTICAL_HOLD > 0 and d.ident.tier in ("alert", "possible") and now - d.last <= TACTICAL_HOLD))
+              and passes_signal(d, now)]
     active.sort(key=lambda d: d.last, reverse=True)
 
     if not CFG["dedup"]:
@@ -2751,7 +3030,7 @@ def get_processed_devices(now, flood=True):
     seen_fps = {}
     collapsed = []
     for dev in active:
-        if dev.kind in ("private-resolvable", "private-nonresolvable", "random") and dev.fp and dev.fp[0]:
+        if dev.kind in ("private-resolvable", "private-nonresolvable", "random") and dev.fp and dev.fp[0] and not dev.ident.known:
             fp_key = (dev.ident.category, dev.ident.label, dev.fp)
             if fp_key in seen_fps:
                 continue
@@ -2763,12 +3042,12 @@ def get_processed_devices(now, flood=True):
 
 def group_devices(now):
     groups, tactical, known = collections.defaultdict(list), [], {}
-    processed = get_processed_devices(now)
+    processed = get_processed_devices(now, hold=True)
 
     for dev in processed:
         i = dev.ident
         if i.known:
-            known[i.known] = dev
+            known[(i.known, dev.mac)] = dev                  # keyed by label AND address: two entries with the same label must both show
             KNOWN.seen[i.known] = (dev.mac, dev.last)
         elif i.tier in ("alert", "possible"):
             tactical.append(dev)
@@ -2782,29 +3061,53 @@ def group_devices(now):
 # ADDITIONAL VIEW MODES & HELP
 # =============================================================================
 def build_compact_view(size, now):
-    table = Table(title="[bold cyan]Compact Device List (Deduplicated)[/]", box=ROUNDED, expand=True)
-    table.add_column("Status", width=8)
-    table.add_column("Name / Label", ratio=2)
-    table.add_column("Category", ratio=1)
-    table.add_column("MAC", width=17)
-    table.add_column("RSSI / Dist", width=16, justify="right")
+    """Truly compact list: one short line per device (glyph, name, signal, distance, trend), packed into 1-3 columns
+    with no table borders, so as many devices as possible fit on screen."""
+    W, H = size
+    devs = get_processed_devices(now, hold=True)
+    devs.sort(key=lambda d: (held(d, now), -d.ema))
+    cols = 3 if W >= 150 else 2 if W >= 100 else 1
+    inner = max(20, W - 4)                              # panel border + padding
+    gap = 2
+    cw = (inner - gap * (cols - 1)) // cols             # width of one device cell
+    fit = max(1, H - 2) * cols                          # panel border takes two rows
+    shown = devs[:fit]
 
-    active_devs = get_processed_devices(now)
-    active_devs.sort(key=lambda d: d.ema, reverse=True)
-
-    for dev in active_devs[:max(1, size[1] - 8)]:
+    def cell(dev) -> Text:
         live = now - dev.last <= ACTIVE_WINDOW
-        status_col = "bright_green" if live else "dim"
-        cat_col = CATEGORY_COLORS.get(dev.ident.category, "cyan")
-        table.add_row(
-            status_text(dev, now, live),
-            Text(display_name(dev), style=throb_text(flash_style(dev, now, "bold")[0], dev.ident.tier, now)),
-            Text(dev.ident.category, style=cat_col),
-            Text(dev.mac, style="dim"),
-            meter(dev, now, status_col)
-        )
-    return Panel(table, title="[bold]Compact View (Press 'v' to cycle views, 'd' to toggle dedup)[/]",
-                 border_style=throb_border("cyan", worst_tier(active_devs), now), box=ROUNDED)
+        stale = held(dev, now)
+        base = "bold" if live else "dim"
+        nstyle, fresh = flash_style(dev, now, base)
+        sym, tcol = trend(dev, now)
+        d_ft = est_distance_ft(dev.ema, dev.tx)
+        d_str = ">300" if d_ft > 300 else f"{d_ft:.0f}"
+        right = Text(no_wrap=True)
+        right.append(f"{dev.ema:>4.0f}", style="bright_green" if live else "dim")
+        right.append(f" {d_str:>4}ft ", style="bright_green" if live else "dim")
+        right.append(sym, style=tcol)
+        left = Text(no_wrap=True)
+        left.append("✦ " if fresh else ("● " if live else "○ "),
+                    style="bold bright_white" if fresh else ("bright_green" if live else "dim"))
+        name = Text(display_name(dev), style=throb_text(nstyle, "" if stale else dev.ident.tier, now) if not fresh else nstyle,
+                    no_wrap=True)
+        name.truncate(max(6, cw - 2 - right.cell_len), overflow="ellipsis", pad=True)
+        left.append_text(name)
+        left.append_text(right)
+        left.truncate(cw, overflow="crop", pad=True)
+        return left
+
+    grid = Table.grid(padding=(0, gap), expand=True)
+    for _ in range(cols):
+        grid.add_column(no_wrap=True, overflow="crop")
+    if not shown:
+        grid.add_row(Text("No devices in range.", style="dim"), *[""] * (cols - 1))
+    for i in range(0, len(shown), cols):
+        row = [cell(d) for d in shown[i:i + cols]]
+        grid.add_row(*row, *[""] * (cols - len(row)))
+    more = f" · +{len(devs) - len(shown)} more not shown" if len(devs) > len(shown) else ""
+    return Panel(grid, title=f"[bold cyan]Compact ({len(devs)})[/]{more}", title_align="left",
+                 subtitle="v / ← → cycle views · d dedup · [ ] signal filter",
+                 border_style=throb_border("cyan", worst_tier(live_tier_devs(shown, now)), now), box=ROUNDED, padding=(0, 1))
 
 def build_tactical_view(size, now):
     _, tactical, known = group_devices(now)
@@ -2814,21 +3117,25 @@ def build_tactical_view(size, now):
     table.add_column("Vendor / Org", ratio=2)
     table.add_column("MAC", width=17)
     table.add_column("RSSI", width=10, justify="right")
+    table.add_column("Last seen", width=13, justify="right", no_wrap=True)
 
     all_tactical = tactical + list(known.values())
     if not all_tactical:
-        table.add_row("---", "No tactical or flagged devices detected yet.", "", "", "")
+        table.add_row("---", "No tactical or flagged devices detected yet.", "", "", "", "")
     for dev in all_tactical:
-        tier_style = throb_text("bold red" if dev.ident.tier == "alert" else "bold yellow", dev.ident.tier, now)
+        stale = held(dev, now)
+        base = "bold red" if dev.ident.tier == "alert" else "bold yellow"
+        tier_style = ("dim " + base.split()[1]) if stale else throb_text(base, dev.ident.tier, now)
         table.add_row(
             Text(dev.ident.tier.upper(), style=tier_style),
-            Text(display_name(dev), style=flash_style(dev, now, "bold")[0]),
-            Text(dev.ident.vendor or dev.ident.label, style="cyan"),
+            Text(display_name(dev), style="dim" if stale else flash_style(dev, now, "bold")[0]),
+            Text(dev.ident.vendor or dev.ident.label, style="dim cyan" if stale else "cyan"),
             Text(dev.mac, style="dim"),
-            Text(f"{dev.ema:.0f} dBm", style="green")
+            Text(f"{dev.ema:.0f} dBm", style="dim" if stale else "green"),
+            Text(seen_ago(dev, now), style="dim" if stale else "bright_green")
         )
     return Panel(table, title="[bold]Tactical View (Press 'v' to cycle views)[/]",
-                 border_style=throb_border("red", worst_tier(all_tactical), now), box=ROUNDED)
+                 border_style=throb_border("red", worst_tier(live_tier_devs(all_tactical, now)), now), box=ROUNDED)
 
 BASE_VIEWS = [("grid", "Standard Grid"), ("top5", "Top 5 Categories"), ("compact", "Compact List"),
               ("tactical", "Tactical / Alert Focus"), ("security", "Security Watch"),
@@ -2877,8 +3184,8 @@ def build_category_view(size, now, key):
     if meta is None:
         return Panel(Text(f"Unknown category '{key}'."), border_style="red", box=ROUNDED)
     _, icon, title, color = meta
-    devs = [d for d in get_processed_devices(now) if d.ident.category == key]
-    devs.sort(key=lambda d: d.ema, reverse=True)
+    devs = [d for d in get_processed_devices(now, hold=True) if d.ident.category == key]
+    devs.sort(key=lambda d: (held(d, now), -d.ema))
 
     table = Table(box=ROUNDED, expand=True)
     table.add_column("Status", width=8, no_wrap=True)
@@ -2896,14 +3203,14 @@ def build_category_view(size, now, key):
         tier = dev.ident.tier
         name_style = "bold red" if tier == "alert" else "bold yellow" if tier == "possible" else "bold green" if tier == "known" else "bold"
         table.add_row(status_text(dev, now, live),
-                      Text(display_name(dev), style=throb_text(flash_style(dev, now, name_style)[0], tier, now)),
+                      Text(display_name(dev), style=throb_text(flash_style(dev, now, name_style)[0], "" if held(dev, now) else tier, now)),
                       Text(sub_text(dev)),
                       dev.mac,
                       meter(dev, now, "bright_green" if live else "dim"),
                       fmt_dur(now - dev.first, True))
     more = f"  (+{len(devs) - cap} more not shown)" if len(devs) > cap else ""
     return Panel(table, title=f"[bold {color}]{icon} {title} ({len(devs)})[/]{more}", title_align="left",
-                 subtitle="v / ← → cycle views · w pick a view", border_style=throb_border(color, worst_tier(devs[:cap]), now), box=ROUNDED)
+                 subtitle="v / ← → cycle views · w pick a view", border_style=throb_border(color, worst_tier(live_tier_devs(devs[:cap], now)), now), box=ROUNDED)
 
 SECURITY_LEVELS = {
     "alert": ("ALERT", "bold red"), "possible": ("POSSIBLE", "bold yellow"), "follower": ("FOLLOWER", "bold red"),
@@ -2914,7 +3221,7 @@ SECURITY_ORDER = ["alert", "possible", "follower", "watchlist", "notice"]
 def security_rows(now) -> list:
     """(level, device) for everything security-relevant, most severe first, then strongest signal."""
     rows = []
-    for dev in get_processed_devices(now):
+    for dev in get_processed_devices(now, hold=True):
         i = dev.ident
         if KNOWN and dev.mac in KNOWN.trusted:
             continue
@@ -2934,13 +3241,14 @@ def security_rows(now) -> list:
         else:
             continue
         rows.append((level, dev))
-    rows.sort(key=lambda r: (SECURITY_ORDER.index(r[0]), -r[1].ema))
+    rows.sort(key=lambda r: (SECURITY_ORDER.index(r[0]), held(r[1], now), -r[1].ema))
     return rows
 
 def build_security_view(size, now):
     """One screen for everything security-related: tactical/ALPR/drone flags, followers, watchlist, pentest gear, trackers."""
     rows = security_rows(now)
     counts = collections.Counter(level for level, _ in rows)
+    live_counts = collections.Counter(level for level, d in rows if not held(d, now))
 
     summary = Text(no_wrap=True, overflow="ellipsis")
     for level in SECURITY_ORDER:
@@ -2956,9 +3264,10 @@ def build_security_view(size, now):
     table.add_column("Why flagged", ratio=3, no_wrap=True, overflow="ellipsis")
     table.add_column("MAC", width=17, no_wrap=True, style="dim")
     table.add_column("RSSI / Dist", width=18, justify="right", no_wrap=True)
+    table.add_column("Seen", width=10, justify="right", no_wrap=True)
 
     if not rows:
-        table.add_row("---", Text("Nothing security-relevant in range.", style="dim"), "", "", "")
+        table.add_row("---", Text("Nothing security-relevant in range.", style="dim"), "", "", "", "")
     cap = max(1, size[1] - 8)
     for level, dev in rows[:cap]:
         label, style = SECURITY_LEVELS[level]
@@ -2971,15 +3280,17 @@ def build_security_view(size, now):
         else:
             why = (clean(i.reasons[0], 70) if i.reasons else "") or i.label or i.category.replace("_", " ")
         live = now - dev.last <= ACTIVE_WINDOW
-        table.add_row(Text(label, style=throb_text(style, "alert" if level in ("alert", "follower") else "possible" if level == "possible" else "", now)),
-                      Text(display_name(dev), style=flash_style(dev, now, style if level != "notice" else "bold")[0]),
-                      Text(why), dev.mac, meter(dev, now, "bright_green" if live else "dim"))
+        stale = held(dev, now)
+        table.add_row(Text(label, style="dim" if stale else throb_text(style, "alert" if level in ("alert", "follower") else "possible" if level == "possible" else "", now)),
+                      Text(display_name(dev), style="dim" if stale else flash_style(dev, now, style if level != "notice" else "bold")[0]),
+                      Text(why, style="dim" if stale else ""), dev.mac, meter(dev, now, "bright_green" if live else "dim"),
+                      Text(seen_ago(dev, now), style="dim" if stale else "bright_green"))
     more = f"  (+{len(rows) - cap} more not shown)" if len(rows) > cap else ""
-    hot = any(counts.get(k) for k in ("alert", "follower", "watchlist"))
+    hot = any(live_counts.get(k) for k in ("alert", "follower", "watchlist"))
     return Panel(Group(summary, table), title=f"[bold]🛡 Security Watch ({len(rows)})[/]{more}", title_align="left",
                  subtitle="v / ← → cycle views · f follower detail · c inspect",
                  border_style=throb_border("red" if hot else "yellow" if rows else "green",
-                                           "alert" if hot else "possible" if counts.get("possible") else "", now),
+                                           "alert" if hot else "possible" if live_counts.get("possible") else "", now),
                  box=ROUNDED)
 
 VIEW_HINT = "v / ← → cycle views · w pick a view"
@@ -3050,14 +3361,14 @@ DIST_RINGS = [(10, "≤10 ft"), (30, "10-30 ft"), (100, "30-100 ft"), (float("in
 
 def build_proximity_view(size, now):
     """Every live device ordered by estimated distance, with a ring summary."""
-    devs = get_processed_devices(now)
+    devs = get_processed_devices(now, hold=True)
     dist = {d.mac: est_distance_ft(d.ema, d.tx) for d in devs}
-    # order by smoothed signal strength (same key as the closeness bar), distance only breaks ties
-    devs.sort(key=lambda d: (-d.ema, dist[d.mac]))
+    # order by smoothed signal strength (same key as the closeness bar), distance only breaks ties; held (out of range) flagged devices go last
+    devs.sort(key=lambda d: (held(d, now), -d.ema, dist[d.mac]))
     summary = Text(no_wrap=True, overflow="ellipsis")
     lo = -1.0
     for hi, label in DIST_RINGS:
-        n = sum(1 for d in devs if lo < dist[d.mac] <= hi)
+        n = sum(1 for d in devs if not held(d, now) and lo < dist[d.mac] <= hi)
         summary.append(f"{label} {n}", style="bright_white" if n else "dim")
         summary.append("  ·  ", style="dim")
         lo = hi
@@ -3080,13 +3391,13 @@ def build_proximity_view(size, now):
         d_ft = dist[dev.mac]
         sym, tcol = trend(dev, now)
         table.add_row(status_text(dev, now, live),
-                      Text(display_name(dev), style=throb_text(flash_style(dev, now, "bold")[0], dev.ident.tier, now)),
+                      Text(display_name(dev), style=throb_text(flash_style(dev, now, "bold")[0], "" if held(dev, now) else dev.ident.tier, now)),
                       Text(dev.ident.category.replace("_", " "), style=CATEGORY_COLORS.get(dev.ident.category, "cyan")),
                       mini_bar(max(0.0, min(1.0, (dev.ema + 100) / 55)), 20, col),
                       ">300ft" if d_ft > 300 else f"{d_ft:.1f}ft",
                       Text(sym, style=tcol))
     return Panel(Group(summary, table), title="[bold]📡 Proximity Radar[/]", title_align="left",
-                 subtitle=VIEW_HINT, border_style=throb_border("green", worst_tier(devs), now), box=ROUNDED)
+                 subtitle=VIEW_HINT, border_style=throb_border("green", worst_tier(live_tier_devs(devs, now)), now), box=ROUNDED)
 
 ARRIVAL_WINDOW = 300.0
 
@@ -3232,7 +3543,11 @@ def build_known_view(size, now):
 
 def build_sensors_view(size, now):
     """Every device broadcasting readings we can decode (thermometers, beacons with sensors, door/motion sensors...)."""
-    devs = [d for d in DEVICES.values() if d.sensor and now - d.last <= SENSOR_STALE and passes_signal(d, now)]
+    allsens = [d for d in DEVICES.values() if d.sensor and now - d.last <= SENSOR_STALE and passes_signal(d, now)]
+    # Beacons (iBeacon / Eddystone UID+URL, e.g. Tesla phone-key) carry IDs, not readings: keep them out of the list so
+    # thermometers, door sensors etc. aren't buried. They are summarised in the footer instead.
+    devs = [d for d in allsens if not d.sensor.get("beacon")]
+    beacons = len(allsens) - len(devs)
     devs.sort(key=lambda d: d.ema, reverse=True)
     table = Table(box=ROUNDED, expand=True)
     table.add_column("Status", width=8, no_wrap=True)
@@ -3241,7 +3556,8 @@ def build_sensors_view(size, now):
     table.add_column("Readings", ratio=3, no_wrap=True, overflow="ellipsis")
     table.add_column("Signal", width=12, justify="right", no_wrap=True)
     if not devs:
-        table.add_row("---", Text("No decodable sensors heard yet (BTHome, ATC/PVVX, Ruuvi, Govee H5074/H5075).", style="dim"), "", "", "")
+        table.add_row("---", Text("No decodable sensors heard yet (BTHome, ATC/PVVX, Ruuvi, Govee, SwitchBot, Eddystone TLM)."
+                                   + (f" {beacons} beacon(s) hidden." if beacons else ""), style="dim"), "", "", "")
     for d in devs[:max(1, size[1] - 8)]:
         live = now - d.last <= ACTIVE_WINDOW
         sn = d.sensor
@@ -3249,8 +3565,9 @@ def build_sensors_view(size, now):
         table.add_row(status_text(d, now, live), Text(display_name(d, sensor=False)), Text(sn["fmt"], style="cyan"),
                       Text(reads, style="bright_white" if live else "dim"),
                       f"{d.ema:.0f} dBm")
+    note = f" · {beacons} beacon(s) hidden (iBeacon/Eddystone IDs, see the inspector)" if beacons else ""
     return Panel(table, title=f"[bold]🌡 Sensors ({len(devs)} decoded)[/]", title_align="left",
-                 subtitle=VIEW_HINT, border_style="green", box=ROUNDED)
+                 subtitle=VIEW_HINT + note, border_style="green", box=ROUNDED)
 
 EXTRA_VIEWS = {"top5": build_top_categories_view, "proximity": build_proximity_view, "radar": build_radar_view, "arrivals": build_arrivals_view,
                "stats": build_stats_view, "ghosts": build_ghosts_view, "known": build_known_view,
@@ -3284,11 +3601,13 @@ def build_help_panel(size):
         ("w / W", "Pick a View", "Choose any view (top 5, security, proximity, a single category...) from a numbered list."),
         ("p / P", "Player Profile", "Level, daily quests, bounties, achievements, titles. p closes."),
         ("y / Y", "Missions", "With the inspector closed: timed challenges with a countdown (e.g. 5 vendors in 3 min). 1-9 starts one, 0 abandons, y closes."),
+        ("#", "Device Album", "Every device model you have discovered, with rarity from how often it shows up across your sessions. ↑/↓ select, ←/→ category, 1-4 sort, # closes."),
         ("← → ↑ ↓ j k", "Profile Nav", "While the profile is open: ←/→ change page, ↑/↓ or j/k scroll."),
         ("t / T", "Titles & Name", "Equip an unlocked title or change your player name."),
         ("e / E", "Coin Exchange", "Spend Intel Coins on themes, neon mode, glitch effects. pN previews. (In the hunt view, e ends the hunt.)"),
         ("b / B", "Guide / Tutorial", "How every feature works and how to play the game. ←/→ pages, ↑/↓ scroll, 1-9 jump, b closes."),
         ("u / U", "Auto Tactical", "Toggle: jump to the Tactical view whenever a new alert/possible tactical device is found (saved)."),
+        (",", "Settings", "Change every setting in-game, incl. boot speed, levels, XP, coins, daily hooks. ↑/↓ select, ←/→ change, Enter type, Tab/1-6 page."),
         ("$", "Support the Dev", "Donate via PayPal, then enter the unlock code for a sparkling name and a gold SUPPORTER badge."),
         ("h / H / ?", "Toggle Help", "Show or hide this panel."),
         ("q / Q / Esc", "Quit", "Stop scanning and exit."),
@@ -3634,6 +3953,14 @@ def adapter_details(name: str) -> dict:
         pass
     return info
 
+def pick_adapter() -> str:
+    """Prefer hci1 (an external dongle) when it exists, otherwise the first adapter BlueZ lists (the Steam Deck's built-in one is hci0)."""
+    try:
+        found = sorted(p.name for p in Path("/sys/class/bluetooth").iterdir() if re.fullmatch(r"hci\d+", p.name))
+    except OSError:
+        found = []
+    return "hci1" if "hci1" in found else (found[0] if found else "hci0")
+
 def adapter_label(full: bool = False) -> str:
     if not sys.platform.startswith("linux"):
         return "system default"                      # bleak only honours an adapter choice on Linux / BlueZ
@@ -3701,6 +4028,10 @@ def inspect_identity_panel(dev: Dev, now: float) -> Panel:
         g.add_row("Identified as", Text(i.label))
     if i.vendor:
         g.add_row("Vendor", Text(i.vendor, style="cyan"))
+    if ALBUM["on"] and dev.album_key in ALBUM["data"]["models"]:
+        ae = ALBUM["data"]["models"][dev.album_key]
+        ar = album_rarity(ae)
+        g.add_row("Album", Text(f"#{ae['no']:03d} {ae['t']} · " + (f"{ar[0].title()} · " if ar else "") + f"seen in {ae['s']} session(s)", style=ar[1] if ar else "dim"))
     if i.tier:
         g.add_row("Tier", Text(f"{i.tier.upper()} · confidence {i.confidence}",
                                style="bold red" if i.tier == "alert" else "bold yellow" if i.tier == "possible" else "green"))
@@ -4083,6 +4414,75 @@ def build_dashboard(size):
     )
     return crt_wrap(root, now)
 
+def build_grid_view(size, now, spin):
+    """Standard grid, adaptive: only categories that have devices get a panel; the panels are packed into 1-3 columns and
+    share the screen height, so the free space goes to listing devices instead of to empty boxes."""
+    W, H = size
+    groups, tactical, known = group_devices(now)
+    cats = [c for c in CATEGORIES if not (CFG["civilian_filter"] and c[0] in CIVILIAN)]
+    # Flagged devices: tactical (ALERT / POSSIBLE) plus watchlist matches from your known-devices file, most severe first.
+    flagged = tactical + [d for d in known.values() if d.ident.known_alert]
+    flagged.sort(key=lambda d: (held(d, now), d.ident.tier != "alert", -d.ema))
+    friends = sorted((d for d in known.values() if not d.ident.known_alert), key=lambda d: (held(d, now), -d.ema))
+    if friends:                                             # your own known devices were never drawn in the grid before
+        groups["__known"] = friends
+        cats = cats + [("__known", "⭐", "KNOWN DEVICES", "green")]
+    active = [c for c in cats if groups.get(c[0])]
+    empty = [c for c in cats if not groups.get(c[0]) and c[0] != "__known"]
+    cols = 3 if W >= 150 else 2 if W >= 100 else 1
+    avail = max(4, H - 3)                                   # the footer takes three rows
+    tac_panel, tac_h = None, 0
+    if flagged:                                             # full-width red panel across the top, so it can never be missed
+        tac_lines = max(1, min(len(flagged), 6, (avail - 6) // 2))
+        tac_h = tac_lines + 2
+        hid = len(flagged) - tac_lines
+        tac_panel = device_panel(f"[bold red]🎯 TACTICAL / FLAGGED ({len(flagged)})" + (f" +{hid}" if hid > 0 else "") + "[/]",
+                                 "red", flagged, tac_lines, now, CFG["subtitles"], spin)
+        avail -= tac_h
+
+    def plan(cap: int):
+        heights, assign = [0] * cols, [[] for _ in range(cols)]
+        for c in active:                                    # category order is kept, so panels don't jump around
+            h = min(len(groups[c[0]]), cap) + 2
+            i = heights.index(min(heights))
+            assign[i].append((c, cap))
+            heights[i] += h
+        return assign, max(heights, default=0)
+
+    cap = 60
+    assign, tallest = plan(cap)
+    while tallest > avail and cap > 1:                      # as many device lines as fit, but never fewer than one each
+        cap -= 1
+        assign, tallest = plan(cap)
+
+    col_cells = []
+    for items in assign:
+        panels = []
+        for (key, icon, title, color), c in items:
+            devs = groups[key]
+            hidden = len(devs) - min(len(devs), c)
+            more = f" +{hidden}" if hidden else ""
+            panels.append(device_panel(f"[bold {color}]{icon} {title} ({len(devs)}){more}[/]", color, devs, c, now,
+                                       CFG["subtitles"], spin))
+        col_cells.append(Group(*panels) if panels else Text(""))
+    if not active:
+        col_cells = [Panel(Text(f"scanning {spin}  no devices in range yet", style="dim cyan"), border_style="grey50", box=ROUNDED)] + [Text("")] * (cols - 1)
+    grid = Table.grid(expand=True, padding=0)
+    for _ in range(cols):
+        grid.add_column(ratio=1)
+    grid.add_row(*col_cells)
+
+    foot = Text(no_wrap=True, overflow="ellipsis")
+    foot.append(f"Seen {len(SEEN)} · {STATS['pps']:.0f} pkt/s", style="bright_white")
+    if empty:
+        foot.append("  │  empty: ", style="dim")
+        foot.append(" ".join(c[1] for c in empty), style="dim")
+    foot.append("  │  v views · d dedup · c inspect · r rename · p profile · # album · h help", style="dim")
+    parts = ([Layout(tac_panel, size=tac_h)] if tac_panel is not None else []) + [Layout(grid, ratio=1)]
+    root = Layout()
+    root.split_column(*parts, Layout(Panel(foot, border_style="grey50", box=ROUNDED, padding=(0, 1)), size=3))
+    return root
+
 def build_view(size):
     """The active screen's body. (size is the space left for it below the HUD.)"""
     W, H = size
@@ -4091,10 +4491,14 @@ def build_view(size):
 
     if CFG["show_help"]:
         return build_help_panel(size)
+    if CFG["show_settings"]:
+        return build_settings_panel(size)
     if CFG["show_tutorial"]:
         return build_tutorial_panel(size)
     if CFG["show_missions"]:
         return build_missions_panel(size)
+    if CFG["show_album"]:
+        return build_album_panel(size)
     if CFG["show_profile"]:
         return build_profile_panel(size)
     if CFG["show_follow"]:
@@ -4115,26 +4519,472 @@ def build_view(size):
     elif kind.startswith("cat:"):
         return build_category_view(size, now, kind[4:])
 
-    groups, tactical, known = group_devices(now)
-    subs = CFG["subtitles"]
+    return build_grid_view(size, now, spin)
 
-    cats = [c for c in CATEGORIES if not (CFG["civilian_filter"] and c[0] in CIVILIAN)]
-    cols = 3 if W >= 150 else 2 if W >= 100 else 1
-    n_cells = len(cats) + 1
-    n_rows = math.ceil(n_cells / cols)
-    cells = [device_panel(f"[bold {color}]{icon} {title} ({len(groups.get(key, []))})[/]", color, groups.get(key, []), 4, now, subs, spin)
-             for key, icon, title, color in cats]
+# =============================================================================
+# DEVICE ALBUM (key #)
+#
+# A collection of every distinct device MODEL you have discovered, Pokedex style. One entry per model ("JBL Flip 6",
+# "Govee H6159", "Apple Find My beacon"), not per physical device, so twenty AirTags are one entry and rotating MAC
+# addresses never inflate it. Each entry remembers when it was first and last heard, how many sessions it showed up in,
+# how many individual devices you have spotted, and your strongest signal.
+#
+# Rarity comes from YOUR history: the share of your scan sessions in which the model appeared. Seen in most sessions =
+# Common, seen once in a blue moon = Legendary. It stays "unrated" until you have a few sessions to compare against.
+#
+# Privacy by design: the album file stores model names only. Never MAC addresses, never locations, and a model name is
+# cut off before any owner name ("Jessie's iPhone 14" is saved as "iPhone 14"). Medical and assistive devices (insulin
+# pumps, glucose monitors, hearing aids, wheelchairs, prosthetics) are not collected unless you pass --album-sensitive.
+#
+# Saved in lookout_album.json next to the script (--album FILE to move it, --no-album to turn it off,
+# --album-stats to print a summary and exit). Independent of the game layer, so it also works with --no-game.
+# =============================================================================
+ALBUM_FILE = "lookout_album.json"
+ALBUM_MIN_SESSIONS = 3                       # rarity needs this many sessions to compare against
+ALBUM_MAX_ENTRIES = 5000
+ALBUM_SAVE_EVERY = 30.0                      # seconds between background saves (only when something changed)
+ALBUM_SETTLE = 3.0                           # a device must have been heard this long (s) before it is filed, so a name that arrives late is used
+ALBUM_SENSITIVE_CATS = {"medical_health", "accessibility_hearing_assistive"}
+ALBUM_RARITY = [                             # (tier, minimum share of your sessions, style, badge): checked top to bottom
+    ("common", 0.60, "white", "●"),
+    ("uncommon", 0.30, "bright_green", "◆"),
+    ("rare", 0.10, "deep_sky_blue1", "◆"),
+    ("epic", 0.03, "medium_purple1", "★"),
+    ("legendary", 0.0, "gold1", "✦"),
+]
+ALBUM_RARITY_INFO = {t: (st, b) for t, _, st, b in ALBUM_RARITY}
+ALBUM_SORTS = ["Discovery #", "Rarest first", "Recently seen", "A–Z"]
 
-    st_table = Table.grid(expand=True)
-    st_table.add_row(Text(f"Seen: {len(SEEN)} | Packets/s: {STATS['pps']:.0f} | Shortcuts: [s] Scan, [d] Dedup, [r] Rename, [c] Inspect, [i] Ignore, [f] Followers, [g] Hunt, [m] Mute, [n] Notify sound, [v] Next view, [w] Pick view, [ / ] Signal filter, [o] CRT, [p] Profile, [y] Missions, [b] Guide, [u] Auto-tactical, [$] Support the dev, [h] Help, [q] Quit", style="dim"))
-    cells.append(Panel(st_table, title="[bold]📊 SESSION & SHORTCUTS[/]", border_style="grey50", box=ROUNDED))
+ALBUM = {"on": False, "path": ALBUM_FILE, "data": None, "dirty": False, "last_save": 0.0, "last_tick": 0.0,
+         "sensitive": False, "warnings": [], "session_counted": False,
+         "session_models": set(),            # model keys heard this session
+         "session_new": [],                  # model keys first discovered this session, in order
+         "session_ids": {}}                  # model key -> device ids already counted this session
+ALBUM_UI = {"cur": 0, "top": 0, "cat": 0, "sort": 0}
 
-    body = Layout()
-    rows = [Layout(name=f"r{i}") for i in range(n_rows)]
-    body.split_column(*rows)
-    for i, row in enumerate(rows):
-        row.split_row(*[Layout(c) for c in cells[i * cols:(i + 1) * cols]])
-    return body
+# Words that may follow the brand/model in a name without being someone's name ("JBL Flip 6", "Galaxy Watch5 Pro").
+ALBUM_MODEL_WORDS = {
+    "pro", "max", "plus", "ultra", "mini", "air", "lite", "fit", "flex", "charge", "flip", "clip", "pulse", "boom", "studio",
+    "buds", "watch", "band", "ring", "tag", "speaker", "earbuds", "headphones", "soundbar", "remote", "tracker", "scale",
+    "sensor", "thermometer", "smart", "wireless", "gen", "series", "edition", "go", "one", "neo", "active", "sport", "classic",
+    "solo", "elite", "wave", "note", "pad", "tab", "book", "pod", "pods", "blade", "spark", "vibe", "glow", "bar", "beam",
+    "arc", "roam", "move", "ace", "core", "prime", "nano", "controller", "keyboard", "mouse", "lamp", "bulb", "strip", "hub",
+}
+ALBUM_STOP_WORDS = {"of", "de", "del", "van", "von", "di", "da", "du", "for", "by", "at", "and", "with", "&", "-", "–", "|", "@"}
+_ALBUM_HEXID = re.compile(r"^(?=.*\d)(?=.*[a-f])[0-9a-f]{4,}$", re.I)       # a1b2c3 / 1A2B: letters and digits, all hex
+
+def _album_token_ok(tok: str, prev: str) -> bool:
+    """Could this token be part of a model name (as opposed to a serial number or a person's name)?"""
+    low = tok.lower()
+    if not tok or len(tok) > 20 or low in ALBUM_STOP_WORDS or re.search(r"['’]s$", low):
+        return False
+    if _ALBUM_HEXID.match(tok) or re.fullmatch(r"\d{5,}", tok) or re.fullmatch(r"(?:[0-9a-f]{2}[:-]){2,}[0-9a-f]{2}", low):
+        return False                                               # serial number / MAC fragment
+    if re.fullmatch(r"\d{4}", tok) and re.search(r"\d", prev):
+        return False                                               # "H6159 1234": the last 4 are a unit id
+    if any(c.isdigit() for c in tok):
+        return True                                                # "H10", "XM5", "14", "Pro2"
+    if low in ALBUM_MODEL_WORDS or len(tok) <= 3:
+        return True
+    return bool(re.search(r"[a-z][A-Z]", tok))                     # CamelCase product word ("SoundLink"); a plain word could be a first name
+
+def album_stem(name: str, term: str):
+    """(key, title) for a model from an advertised name and the rule term that matched inside it, or None.
+    Everything before the matched term is dropped (that is where owner names live), serial numbers are stripped,
+    and at most three model-looking words may follow."""
+    s = re.sub(r"[\s_]+", " ", name or "").strip()
+    t = norm(term or "")
+    if not s or not t:
+        return None
+    idx = s.lower().find(t)
+    if idx < 0:
+        return None
+    head, rest = s[idx:idx + len(t)], s[idx + len(t):]
+    glued = re.match(r"[0-9A-Za-z]*", rest).group(0)               # "MIScooter7102": digits stuck to the term
+    if glued:
+        if len(glued) >= 3 and re.search(r"\d", glued) and re.fullmatch(r"[0-9a-fA-F]+", glued):
+            rest = rest[len(glued):]                               # a serial number
+        else:
+            head, rest = head + glued, rest[len(glued):]
+    rest = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", rest)         # (1234)  [AB:CD]
+    head = re.sub(r"[-: ]?[0-9a-fA-F]{6,}$", "", head) if re.search(r"[A-Za-z]{2}", head) else head   # FS-1A2B3C4D, ATC 1A2B3C
+    head = re.sub(r"^([A-Za-z]{1,12})\d{5,}$", r"\1", head)         # ow055331, LK12345
+    head = re.sub(r"^(dexcom|dxcm)[0-9a-z]{2}$", r"\1", head, flags=re.I)   # Dexcom + last 2 chars of the transmitter id
+    head = head.strip(" -:")
+    if len(head) < 2:
+        return None
+    toks, prev = [head], head
+    for tok in rest.split():
+        if len(toks) > 3:
+            break
+        if not _album_token_ok(tok, prev):
+            if tok.lower() in ALBUM_STOP_WORDS or re.search(r"['’]s$", tok.lower()):
+                break                                              # "iPhone de Maria": nothing after the particle
+            continue
+        toks.append(tok)
+        prev = tok
+    title = clean(" ".join(toks), 40)
+    key = norm(title)
+    return (key, title) if len(key) >= 2 else None
+
+def album_loose_stem(name: str):
+    """Key/title for a named device no rule recognised. Only names that read like a model designator ("XJ-900", "TZ301 Pro")
+    are filed; plain words ("Kitchen", "Sarah") are skipped because they are far more likely to be a person or a room."""
+    s = re.sub(r"[\s_]+", " ", name or "").strip()
+    if (not s or len(s) > 24 or re.search(r"['’]s\b|\d{5,}", s) or re.fullmatch(r"[0-9a-fA-F:\- ]+", s)
+            or not re.search(r"[A-Za-z]", s)):
+        return None
+    toks, prev = [], ""
+    for tok in re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", s).split():
+        if _album_token_ok(tok, prev):
+            toks.append(tok)
+            prev = tok
+    if not toks or not any(re.search(r"[A-Za-z]", t) and re.search(r"\d", t) for t in toks) and not (
+            any(re.search(r"\d", t) for t in toks) and any(re.search(r"[A-Za-z]{2}", t) for t in toks)):
+        return None
+    title = clean(" ".join(toks[:4]), 40)
+    return (norm(title), title) if len(norm(title)) >= 3 else None
+
+def album_model(dev):
+    """(key, title) of the model a device belongs to, or None when it should not be collected."""
+    i = dev.ident
+    cat = i.category
+    if cat in ("anonymous", "") or (cat in ALBUM_SENSITIVE_CATS and not ALBUM["sensitive"]):
+        return None
+    if dev.name and TESLA_NAME.match(dev.name.lower()):
+        return "tesla car", "Tesla Car"
+    label = (i.label or "").strip()
+    if dev.name and label:
+        m = album_stem(dev.name, label)
+        if m:
+            return m
+    if label and not re.fullmatch(r"[0-9a-f:\- ]{6,}", label.lower()):
+        title = clean(label, 60)
+        return norm(title), title
+    return album_loose_stem(dev.name) if dev.name else None          # unclassified but named: still a discovery, if it reads like a model
+
+def album_rarity(e: dict):
+    """(tier, style, badge) for an entry, or None while there are too few sessions to say."""
+    total = ALBUM["data"]["sessions"] if ALBUM["data"] else 0
+    if total < ALBUM_MIN_SESSIONS:
+        return None
+    share = min(1.0, e["s"] / max(1, total))
+    for tier, lo, style, badge in ALBUM_RARITY:
+        if share >= lo:
+            return tier, style, badge
+    return "legendary", *ALBUM_RARITY_INFO["legendary"]
+
+# ---------------------------------------------------------------- storage
+def album_new_data() -> dict:
+    return {"v": 1, "sessions": 0, "next_no": 1, "models": {}}
+
+def album_init(path: str, sensitive: bool = False) -> list:
+    """Load the album file (a damaged one is moved to .bak) and switch the album on. Returns warnings."""
+    ALBUM.update(path=path, on=True, sensitive=sensitive, data=album_new_data(), dirty=False, warnings=[], last_tick=0.0,
+                 session_counted=False, session_models=set(), session_new=[], session_ids={})
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict) or not isinstance(raw.get("models", {}), dict):
+            raise ValueError("not an album file")
+    except FileNotFoundError:
+        raw = {}
+    except (OSError, ValueError) as e:
+        try:
+            os.replace(path, path + ".bak")
+        except OSError:
+            pass
+        ALBUM["warnings"].append(f"album '{path}' was unreadable ({e}); moved to .bak and started a new one")
+        raw = {}
+    d = ALBUM["data"]
+    d["sessions"] = max(0, int(raw.get("sessions", 0))) if isinstance(raw.get("sessions", 0), (int, float)) else 0
+    for key, e in list(raw.get("models", {}).items())[:ALBUM_MAX_ENTRIES]:
+        try:
+            d["models"][str(key)] = {"no": int(e["no"]), "t": clean(e["t"], 60), "c": clean(e.get("c", "other"), 40) or "other",
+                                     "v": clean(e.get("v", ""), 40), "f": float(e["f"]), "l": float(e["l"]),
+                                     "s": max(1, int(e["s"])), "n": max(1, int(e["n"])), "p": int(e.get("p", -127)),
+                                     "tier": e.get("tier", "") if e.get("tier") in ("alert", "possible") else ""}
+        except (KeyError, TypeError, ValueError):
+            continue
+    d["next_no"] = max([int(raw.get("next_no", 1)) if isinstance(raw.get("next_no", 1), (int, float)) else 1]
+                       + [e["no"] + 1 for e in d["models"].values()])
+    return ALBUM["warnings"]
+
+def album_save(force: bool = False):
+    if not ALBUM["on"] or not (ALBUM["dirty"] or force):
+        return
+    try:
+        tmp = ALBUM["path"] + ".tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(ALBUM["data"], f, indent=1, ensure_ascii=False)
+        os.replace(tmp, ALBUM["path"])
+        ALBUM["dirty"], ALBUM["last_save"] = False, time.time()
+    except OSError as e:
+        log_event(f"album save failed: {e}", "error")
+
+# ---------------------------------------------------------------- collecting
+def album_register(dev, now: float):
+    """File one counted device under its model, creating the entry the first time that model is ever heard."""
+    m = album_model(dev)
+    dev.album_key = m[0] if m else ""
+    if not m:
+        return
+    key, title = m
+    d = ALBUM["data"]
+    e = d["models"].get(key)
+    new = e is None
+    if new:
+        if len(d["models"]) >= ALBUM_MAX_ENTRIES:
+            return
+        e = d["models"][key] = {"no": d["next_no"], "t": title, "c": dev.ident.category, "v": "", "f": now, "l": now,
+                                "s": 0, "n": 0, "p": -127, "tier": ""}
+        d["next_no"] += 1
+    if not ALBUM["session_counted"]:                                 # a session counts once it has filed its first device
+        ALBUM["session_counted"] = True
+        d["sessions"] += 1
+    if key not in ALBUM["session_models"]:
+        ALBUM["session_models"].add(key)
+        e["s"] += 1
+    ids = ALBUM["session_ids"].setdefault(key, set())
+    dev_id = dev.ghost_id or dev.mac
+    if dev_id not in ids and len(ids) < 500:
+        ids.add(dev_id)
+        e["n"] += 1
+    e["c"] = dev.ident.category
+    e["v"] = clean(dev.ident.vendor, 40) or e["v"]
+    e["l"], e["p"] = max(e["l"], dev.last), max(e["p"], dev.peak)
+    if dev.ident.tier == "alert" or (dev.ident.tier == "possible" and e["tier"] != "alert"):
+        e["tier"] = dev.ident.tier
+    ALBUM["dirty"] = True
+    if new:
+        ALBUM["session_new"].append(key)
+        icon = cat_meta(e["c"])[0]
+        log_event(f"Album #{e['no']}: new model {e['t']} ({e['c']})", "info")
+        STATUS.set(f"📖 New album entry #{e['no']}: {icon} {e['t']}   (# opens the album)")
+
+def album_tick(now: float):
+    """Called from the main loop: files newly counted devices and keeps last-seen / best-signal fresh."""
+    if not ALBUM["on"]:
+        return
+    if now - ALBUM["last_tick"] >= 1.5:
+        ALBUM["last_tick"] = now
+        models = ALBUM["data"]["models"]
+        for dev in list(DEVICES.values()):
+            if not dev.counted:
+                continue
+            sig = (dev.fp, dev.ident.category, dev.ident.label, dev.ident.tier)
+            if sig != dev.album_sig:
+                if now - dev.first < ALBUM_SETTLE and dev.packets < 6:
+                    continue                                         # give a late scan-response name a moment to arrive
+                dev.album_sig = sig
+                album_register(dev, now)
+            elif dev.album_key and now - dev.last < ACTIVE_WINDOW:
+                e = models.get(dev.album_key)
+                if e and (dev.last - e["l"] > 20 or dev.peak > e["p"]):
+                    e["l"], e["p"] = max(e["l"], dev.last), max(e["p"], dev.peak)
+                    ALBUM["dirty"] = True
+    if ALBUM["dirty"] and now - ALBUM["last_save"] >= ALBUM_SAVE_EVERY:
+        album_save()
+
+# ---------------------------------------------------------------- the overlay
+def album_entries() -> list:
+    """(key, entry) rows for the current category filter and sort."""
+    d = ALBUM["data"]
+    cats = album_categories()
+    ALBUM_UI["cat"] %= len(cats)
+    want = cats[ALBUM_UI["cat"]][0]
+    rows = [(k, e) for k, e in d["models"].items() if want == "all" or e["c"] == want]
+    total = max(1, d["sessions"])
+    mode = ALBUM_UI["sort"] % len(ALBUM_SORTS)
+    if mode == 1:
+        rows.sort(key=lambda r: (r[1]["s"] / total, r[1]["no"]))
+    elif mode == 2:
+        rows.sort(key=lambda r: -r[1]["l"])
+    elif mode == 3:
+        rows.sort(key=lambda r: r[1]["t"].lower())
+    else:
+        rows.sort(key=lambda r: r[1]["no"])
+    return rows
+
+def album_categories() -> list:
+    """[(category key, label, count)]: All first, then tactical, then the dashboard order, then anything else."""
+    counts = collections.Counter(e["c"] for e in ALBUM["data"]["models"].values())
+    order = ["tactical"] + [c[0] for c in CATEGORIES]
+    keys = [c for c in order if c in counts] + sorted(c for c in counts if c not in order)
+    out = [("all", "All categories", sum(counts.values()))]
+    for c in keys:
+        icon, title, _ = cat_meta(c)
+        out.append((c, f"{icon} {title}", counts[c]))
+    return out
+
+def album_age(ts: float, now: float) -> str:
+    return "now" if now - ts < 15 else fmt_dur(now - ts, True) + " ago"
+
+def build_album_panel(size):
+    if not ALBUM["on"]:
+        return Panel(Text("The album is off (started with --no-album)."), title="Device Album", box=ROUNDED)
+    W, H = size
+    now = time.time()
+    d = ALBUM["data"]
+    total = d["sessions"]
+    cats = album_categories()
+    rows = album_entries()
+    ALBUM_UI["cur"] = max(0, min(ALBUM_UI["cur"], len(rows) - 1))
+    cat_key, cat_label, cat_n = cats[ALBUM_UI["cat"] % len(cats)]
+
+    head = Text(no_wrap=True, overflow="ellipsis")
+    head.append("📖 DEVICE ALBUM  ", style="bold bright_cyan")
+    head.append(f"{len(d['models'])} models · {len(cats) - 1} categories · {total} session{'s' if total != 1 else ''}", style="dim")
+    if ALBUM["session_new"]:
+        head.append(f"   ✦ {len(ALBUM['session_new'])} new this session", style="bold bright_yellow")
+    tally = Text(no_wrap=True, overflow="ellipsis")
+    if total < ALBUM_MIN_SESSIONS:
+        tally.append(f"Rarity unlocks after {ALBUM_MIN_SESSIONS} sessions ({total}/{ALBUM_MIN_SESSIONS} so far): it compares each model with how often you see it.", style="dim")
+    else:
+        n = collections.Counter(album_rarity(e)[0] for e in d["models"].values())
+        for tier, _, style, badge in ALBUM_RARITY:
+            tally.append(f"{badge} {tier.title()} {n.get(tier, 0)}   ", style=style)
+    nav = Text(no_wrap=True, overflow="ellipsis")
+    nav.append("Category ", style="dim")
+    nav.append(f"◀ {cat_label} ({cat_n}) ▶", style="bold")
+    nav.append(f"  [{ALBUM_UI['cat'] % len(cats) + 1}/{len(cats)}]", style="dim")
+    nav.append("    Sort ", style="dim")
+    nav.append(ALBUM_SORTS[ALBUM_UI["sort"] % len(ALBUM_SORTS)], style="bold")
+
+    fixed = 2 + 3 + 1 + 4 + 5 + 1                                   # panel border, 3 header lines, blank, table chrome, detail box, slack
+    fit = max(3, H - fixed)
+    top = max(0, min(ALBUM_UI["top"], max(0, len(rows) - fit)))
+    if ALBUM_UI["cur"] < top:
+        top = ALBUM_UI["cur"]
+    elif ALBUM_UI["cur"] >= top + fit:
+        top = ALBUM_UI["cur"] - fit + 1
+    ALBUM_UI["top"] = top
+
+    wide = W >= 100
+    t = Table(box=ROUNDED, expand=True, pad_edge=False)
+    t.add_column("#", width=5, justify="right", no_wrap=True, style="bold yellow")
+    t.add_column("Model", ratio=3, no_wrap=True, overflow="ellipsis")
+    if wide:
+        t.add_column("Category", ratio=2, no_wrap=True, overflow="ellipsis")
+    t.add_column("Rarity", width=11, no_wrap=True)
+    t.add_column("Sessions", width=8, justify="right", no_wrap=True)
+    t.add_column("Devices", width=7, justify="right", no_wrap=True)
+    if wide:
+        t.add_column("Best", width=8, justify="right", no_wrap=True)
+    t.add_column("Last seen", width=10, justify="right", no_wrap=True)
+    new_keys = set(ALBUM["session_new"])
+    for n, (key, e) in enumerate(rows[top:top + fit], top):
+        icon, ctitle, color = cat_meta(e["c"])
+        r = album_rarity(e)
+        rar = Text(f"{r[2]} {r[0].title()}", style=r[1]) if r else Text("· unrated", style="dim")
+        name = Text(no_wrap=True, overflow="ellipsis")
+        name.append(f"{icon} ")
+        name.append(e["t"], style="bold")
+        if e["tier"]:
+            name.append("  ⚠ " + e["tier"].upper(), style="bold red" if e["tier"] == "alert" else "bold yellow")
+        if key in new_keys:
+            name.append("  ✦ NEW", style="bold bright_yellow")
+        cells = [f"{e['no']:03d}", name]
+        if wide:
+            cells.append(Text(ctitle, style=color))
+        cells += [rar, f"{e['s']}/{max(total, e['s'])}", str(e["n"])]
+        if wide:
+            cells.append(f"{e['p']} dBm" if e["p"] > -127 else "—")
+        cells.append(album_age(e["l"], now))
+        t.add_row(*cells, style="reverse" if n == ALBUM_UI["cur"] else "")
+    if not rows:
+        empty = ("Nothing collected yet. Leave the scan running: every new device model you hear is filed here."
+                 if not d["models"] else "No models in this category yet.")
+        t.add_row("", Text(empty, style="dim"), *([""] * (len(t.columns) - 2)))
+
+    det = Text(no_wrap=False)
+    if rows:
+        key, e = rows[ALBUM_UI["cur"]]
+        icon, ctitle, color = cat_meta(e["c"])
+        r = album_rarity(e)
+        det.append(f"#{e['no']:03d} {e['t']}", style="bold bright_white")
+        det.append(f"   {icon} {ctitle}", style=color)
+        if e["v"]:
+            det.append(f" · {e['v']}", style="cyan")
+        det.append("\n")
+        share = f"{100 * min(1.0, e['s'] / max(1, total)):.0f}%"
+        if r:
+            det.append(f"{r[2]} {r[0].upper()}", style="bold " + r[1])
+            det.append(f"  seen in {e['s']} of {total} session{'s' if total != 1 else ''} ({share})", style="dim")
+        else:
+            det.append(f"Seen in {e['s']} of {total} session(s). Rarity unlocks after {ALBUM_MIN_SESSIONS} sessions.", style="dim")
+        det.append(f"\n{e['n']} device{'s' if e['n'] != 1 else ''} spotted in total · strongest signal "
+                   + (f"{e['p']} dBm" if e["p"] > -127 else "unknown"), style="dim")
+        det.append(f"\nFirst found {datetime.datetime.fromtimestamp(e['f']).strftime('%Y-%m-%d')} · last heard {album_age(e['l'], now)}", style="dim")
+    else:
+        det.append("\n\n\n")
+    foot = Text(f"{len(rows)} shown" + (f" · {len(rows) - top - fit} more below (↓)" if len(rows) - top - fit > 0 else "")
+                + ("  ·  sensitive (medical / assistive) models are included" if ALBUM["sensitive"] else
+                   "  ·  medical & assistive devices are not collected (--album-sensitive)"), style="dim", no_wrap=True, overflow="ellipsis")
+    return Panel(Group(head, tally, nav, Text(""), t, det, foot), title="[bold]📖 Device Album[/]", title_align="left",
+                 subtitle="↑/↓ select · ←/→ category · 1-4 sort · # close", border_style="bright_cyan", box=ROUNDED)
+
+def album_key():
+    if not ALBUM["on"]:
+        STATUS.set("The album is off (started with --no-album).")
+        return
+    if CFG["show_album"]:
+        toggle_overlay("album")
+    else:
+        open_overlay("album")
+        ALBUM_UI.update(cur=0, top=0)
+
+def album_nav(ch: str):
+    rows = album_entries()
+    if ch in ("DOWN", "j"):
+        ALBUM_UI["cur"] = min(max(0, len(rows) - 1), ALBUM_UI["cur"] + 1)
+    elif ch in ("UP", "k"):
+        ALBUM_UI["cur"] = max(0, ALBUM_UI["cur"] - 1)
+    elif ch in ("RIGHT", "LEFT"):
+        n = len(album_categories())
+        ALBUM_UI["cat"] = (ALBUM_UI["cat"] + (1 if ch == "RIGHT" else -1)) % n
+        ALBUM_UI.update(cur=0, top=0)
+    elif ch in ("1", "2", "3", "4"):
+        ALBUM_UI.update(sort=int(ch) - 1, cur=0, top=0)
+
+# ---------------------------------------------------------------- report / recap / CLI
+def album_report_section() -> str:
+    """HTML block for the session report: the models first discovered this session."""
+    if not ALBUM["on"]:
+        return ""
+    d = ALBUM["data"]
+    new = [(k, d["models"][k]) for k in ALBUM["session_new"] if k in d["models"]]
+    cards = _cards([("New models this session", len(new)), ("Models heard this session", len(ALBUM["session_models"])),
+                    ("Album total", f"{len(d['models']):,}"), ("Sessions on record", d["sessions"])])
+    if not new:
+        return _section("Device album", cards + '<p class="muted" style="margin-top:12px">No new models this session.</p>')
+    rows = []
+    for k, e in new:
+        r = album_rarity(e)
+        rows.append([(f"{e['no']:03d}", e["no"]), _e(e["t"]), _e(cat_meta(e["c"])[1]), _e(e["v"] or "—"), _e(r[0].title() if r else "unrated"),
+                     _e(e["n"])])
+    return _section("Device album", cards + '<div style="margin-top:12px">' + _table(
+        ["#", "New model", "Category", "Vendor", "Rarity", "Devices"], rows) + "</div>")
+
+def album_stats_text(path: str) -> str:
+    """Plain-text summary for --album-stats (no Bluetooth or rich needed)."""
+    album_init(path)
+    d = ALBUM["data"]
+    if not d["models"]:
+        return f"Album {path}: empty. Run the scanner for a while and models will be filed automatically."
+    lines = [f"Album {path}: {len(d['models'])} models over {d['sessions']} session(s)", ""]
+    by_cat = collections.Counter(e["c"] for e in d["models"].values())
+    for c, n in by_cat.most_common():
+        lines.append(f"  {n:4d}  {cat_meta(c)[0]} {cat_meta(c)[1]}")
+    if d["sessions"] >= ALBUM_MIN_SESSIONS:
+        tiers = collections.Counter(album_rarity(e)[0] for e in d["models"].values())
+        lines += ["", "Rarity: " + " · ".join(f"{t.title()} {tiers.get(t, 0)}" for t, *_ in ALBUM_RARITY)]
+        rare = sorted(d["models"].values(), key=lambda e: (e["s"], e["no"]))[:5]
+        lines += ["", "Rarest:"] + [f"  #{e['no']:03d} {e['t']}  (seen in {e['s']}/{d['sessions']} sessions)" for e in rare]
+    else:
+        lines += ["", f"Rarity unlocks after {ALBUM_MIN_SESSIONS} sessions ({d['sessions']} so far)."]
+    return "\n".join(lines)
 
 # =============================================================================
 # BOOT SEQUENCE
@@ -4342,7 +5192,9 @@ def outro_stats() -> dict:
     s = {"wall": max(0.0, now - start), "scan": SESSION["scan_seconds"], "seen": len(SEEN), "packets": STATS["packets"],
          "cats": len({d.ident.category for d in live if d.ident.category}),
          "alerts": sum(1 for d in live if d.ident.tier == "alert"),
-         "possibles": sum(1 for d in live if d.ident.tier == "possible"), "game": None, "milestones": []}
+         "possibles": sum(1 for d in live if d.ident.tier == "possible"), "game": None, "milestones": [],
+         "album_new": len(ALBUM["session_new"]) if ALBUM["on"] else None,
+         "album_total": len(ALBUM["data"]["models"]) if ALBUM["on"] else None}
     if not GAME["on"]:
         return s
     log = GAME["session_log"]
@@ -4366,6 +5218,8 @@ def _outro_rows(s: dict, ms_limit: int = 6) -> list:
             ("line", "Categories found", str(s["cats"]))]
     if s["alerts"] or s["possibles"]:
         rows.append(("line", "Flagged", f"{s['alerts']} ALERT · {s['possibles']} POSSIBLE"))
+    if s.get("album_total") is not None:
+        rows.append(("line", "Device album", f"+{s['album_new']} new · {s['album_total']:,} models"))
     g = s["game"]
     if g:
         rows += [("blank", "", ""), ("head", "PROGRESS", ""),
@@ -4720,7 +5574,7 @@ def view_flow() -> str:
     close_overlays()
     return f"View {idx}/{len(views)}: {views[idx - 1][1]}"
 
-OVERLAYS = ("help", "follow", "hunt", "inspect", "profile", "tutorial", "missions")
+OVERLAYS = ("help", "follow", "hunt", "inspect", "profile", "tutorial", "missions", "settings", "album")
 
 def toggle_overlay(name: str):
     """Open/close one full-screen panel; opening one closes the rest."""
@@ -4998,6 +5852,8 @@ async def amain(args):
         while not stop.is_set():
             while not key_queue.empty():
                 ch = key_queue.get_nowait()
+                if CFG["show_settings"] and await settings_key(ch, live):     # the settings screen gets first pick of the keys
+                    continue
                 if ch in ('q', 'Q', '\x1b'):
                     stop.set()
                 elif ch in ('m', 'M'):
@@ -5029,11 +5885,18 @@ async def amain(args):
                         STATUS.set(msg)
                 elif ch in ('p', 'P'):
                     game_profile_key()
+                elif ch == '#':
+                    album_key()
+                elif CFG["show_album"] and (ch in ('RIGHT', 'LEFT', 'UP', 'DOWN', 'j', 'k') or ch in ('1', '2', '3', '4')):
+                    album_nav(ch)
                 elif ch in ('u', 'U'):
                     CFG["auto_tactical"] = not CFG["auto_tactical"]
                     AUTO["pending"] = None
                     save_settings()
                     STATUS.set(f"Auto-switch to Tactical view on new tactical device: {'ON' if CFG['auto_tactical'] else 'OFF'}")
+                elif ch == ',':
+                    settings_toggle()
+                    STATUS.set("Settings: ↑/↓ select, ←/→ or Space change, Enter type, Tab / 1-6 page, Esc or , closes" if CFG["show_settings"] else "Closed settings")
                 elif ch == '$':
                     live.stop()
                     with line_mode():
@@ -5163,6 +6026,7 @@ async def amain(args):
             auto_tactical_tick()
             prune_ghosts(now)
             game_tick(now, dt)
+            album_tick(now)
             mission_tick(now, dt)
             fx_tick(now)
             heart_tick(now)
@@ -5422,6 +6286,7 @@ def build_session_report(start: float, end: float) -> str:
         f"<h1>Signal OPS IRL — session report</h1><p class=\"sub\">{_e(_ts(start, True))} → {_e(_ts(end, True))} · passive BLE advertisement scan</p>",
         _section("Summary", cards),
         game_report_section(),
+        album_report_section(),
         _section("Security findings", sec_html),
         _section("Follower watch", follow_html),
         _section("Event timeline", ev_html),
@@ -5917,6 +6782,18 @@ def compile_match(m, label: str, warns: list):
         return None
     return rule
 
+ACHIEVEMENT_UNSCALED = {"level", "achievements_unlocked", "distinct_categories", "streak_days"}   # capped / gauge metrics: the multiplier would make them unreachable
+
+def _achievement_target(metric: str, target: float, s: dict) -> float:
+    """Apply achievement_target_multiplier to lifetime counters only (a x3 on 'level 50' or 'all categories' can never be reached)."""
+    if metric in ACHIEVEMENT_UNSCALED:
+        t = float(round(target))
+    else:
+        t = float(round(target * s["achievement_target_multiplier"]))
+    if metric == "level":
+        t = min(t, float(s["level_cap"]))
+    return max(1.0, t)
+
 def _scaled_bounty_count(count: int, mult: float) -> int:
     """Multi-find bounties need `mult` times as many matches; single-find bounties stay single (they're gated by rarity)."""
     return count if count <= 1 else min(2000, max(2, round(count * mult)))
@@ -6242,7 +7119,7 @@ def parse_game_config(data):
         if not game_metric_known(metric):
             warns.append(f"achievement '{aid}': unknown metric '{metric}' (it can never unlock)")
         cfg["achievements"].append({"id": aid, "name": clean(raw.get("name") or aid, 48), "desc": clean(raw.get("description", ""), 140),
-                                    "metric": metric, "target": max(1.0, float(round(target * s["achievement_target_multiplier"]))),
+                                    "metric": metric, "target": _achievement_target(metric, target, s),
                                     "xp": int(_gnum(raw.get("xp"), 0, 0, 1e6)),
                                     "hidden": bool(raw.get("hidden", False)), "icon": clean(raw.get("icon", "🏆"), 4) or "🏆",
                                     "coins": _opt_coins(raw)})
@@ -7126,6 +8003,57 @@ def game_init(cfg_path, profile_path, player=None) -> list:
     game_save(force=True)
     return GAME["warnings"] + ([GAME["cfg_error"]] if GAME["cfg_error"] else [])
 
+ADDR_TYPES = {"public", "static-random", "private-resolvable", "private-nonresolvable", "random", "unknown"}
+TIER_VALUES = {"alert", "possible", "known"}
+
+def _metric_problem(metric: str, cats: set):
+    """Why a metric like category:x / tier:x / addr:x can never progress (or '' if fine)."""
+    for pre, ok, what in (("category:", cats, "category"), ("tier:", TIER_VALUES, "tier"), ("addr:", ADDR_TYPES, "address type")):
+        if metric.startswith(pre):
+            v = metric[len(pre):]
+            return "" if v in ok else f"unknown {what} '{v}' (valid: {', '.join(sorted(ok))})"
+    return ""
+
+def game_reach_warnings(cfg) -> list:
+    """Quests / achievements / titles / bounties / missions that can never be completed with the loaded scanner config."""
+    load_config(CONFIG_FILE)
+    cats = {c[0] for c in CATEGORIES} | {"tactical"}
+    out, n_cats = [], len(cats)
+    for kind, items in (("quest", cfg["quests"]), ("achievement", cfg["achievements"])):
+        for x in items:
+            why = _metric_problem(x["metric"], cats)
+            if why:
+                out.append(f"{kind} '{x['id']}': {why}")
+            if x["metric"] == "distinct_categories" and x["target"] > n_cats:
+                out.append(f"{kind} '{x['id']}': needs {x['target']:g} categories but only {n_cats} exist")
+            if x["metric"] == "level" and x["target"] > cfg["settings"]["level_cap"]:
+                out.append(f"{kind} '{x['id']}': needs level {x['target']:g} but level_cap is {cfg['settings']['level_cap']}")
+            if kind == "quest" and x["metric"] in ("level", "total_xp", "streak_days", "achievements_unlocked"):
+                out.append(f"quest '{x['id']}': '{x['metric']}' is a lifetime value, so a daily quest on it is instant or never")
+    for t in cfg["titles"]:
+        u = t["unlock"]
+        if u["type"] == "metric":
+            why = _metric_problem(u["metric"], cats)
+            if why:
+                out.append(f"title '{t['id']}': {why}")
+    for b in cfg["bounties"]:
+        for k, ok in (("category", cats), ("tier", TIER_VALUES), ("addr_type", ADDR_TYPES)):
+            bad = [v for v in b["match"].get(k, ()) if v not in ok]
+            if bad:
+                out.append(f"bounty '{b['id']}': match.{k} {bad} can never match")
+    for m in cfg["missions"]:
+        for o in m["objs"]:
+            why = _metric_problem(o["metric"], cats) if o["metric"] else ""
+            if why:
+                out.append(f"mission '{m['id']}': {why}")
+            for k, ok in (("category", cats), ("tier", TIER_VALUES), ("addr_type", ADDR_TYPES)):
+                bad = [v for v in o["rule"].get(k, ()) if v not in ok]
+                if bad:
+                    out.append(f"mission '{m['id']}': match.{k} {bad} can never match")
+            if o["distinct"] == "category" and o["target"] > n_cats:
+                out.append(f"mission '{m['id']}': needs {o['target']} categories but only {n_cats} exist")
+    return out
+
 def check_game_config(path) -> int:
     """--check-game: validate the config, print a summary and the metric reference."""
     try:
@@ -7156,6 +8084,7 @@ def check_game_config(path) -> int:
           f"{len(rt['caches'])} daily cache(s), streak ladder {rt['streak_ladder']}, shields up to {rt['shield']['max']} "
           f"(free every {rt['shield']['free_every']} days), welcome back after {rt['comeback']['min_days_away']} days, "
           f"{rt['weekly_count']} of {len(rt['weekly'])} weekly ops per week")
+    warns += game_reach_warnings(cfg)
     for w in warns:
         print(f"[!] {w}")
     if not warns:
@@ -8353,9 +9282,11 @@ def tutorial_pages() -> list:
         ("k", "g / e", "Hunt a device. In the hunt view, e ends the hunt."),
         ("k", "f / x", "Follower Watch / mark a tracker as yours."),
         ("k", "u", "Toggle auto-switching to the Tactical view when a tactical device appears."),
+        ("k", ",", "Settings screen: change the saved settings and the game rules (boot speed, levels, XP, coins, daily hooks) without leaving the scanner. ↑/↓ select, ←/→ or Space change, Enter type, Tab or 1-6 switch page."),
         ("s",), ("h", "Views, game and misc"),
         ("k", "v / V / w", "Next view / previous view / pick a view. ← and → work too."),
         ("k", "p / t", "Player profile / equip a title or change your name."),
+        ("k", "#", "Device album: every device model you have discovered. ↑/↓ select, ←/→ category, 1-4 sort."),
         ("k", "y", "Mission board: timed challenges. 1-9 starts one, 0 abandons the running one. (With the inspector open, y connects to that device instead.)"),
         ("k", "e", "Coin Exchange: spend Intel Coins on themes, neon mode and glitch effects."),
         ("k", "b", "This guide."),
@@ -8383,6 +9314,12 @@ def tutorial_pages() -> list:
         ("s",), ("h", "Dedup and ghosts (d)"),
         ("p", "Private addresses rotate, so one phone can look like many. The scanner fingerprints the shape of each advertisement and "
               "links rotations that look like the same device. This is a probabilistic match, not a guarantee."),
+        ("s",), ("h", "Device album (#)"),
+        ("p", "A collection of every distinct device MODEL you have heard, not every physical device: twenty AirTags are one entry, and rotating addresses never inflate it. "
+              "Each entry tracks when you first and last heard it, how many sessions it appeared in, how many devices you spotted, and your best signal."),
+        ("p", f"Rarity is based on your own history: the share of your sessions a model appears in. Most sessions = Common, one in a blue moon = Legendary. It unlocks after {ALBUM_MIN_SESSIONS} sessions."),
+        ("p", "The album file (lookout_album.json) stores model names only: no MAC addresses, no locations, and nothing after an owner name. "
+              "Medical and assistive devices are skipped unless you start with --album-sensitive. --no-album turns it off; --album-stats prints a summary."),
         ("s",), ("h", "Known devices"),
         ("p", "lookout_known.json holds your renames, ignore rules, trusted trackers and a watchlist. scanner_config.json adds custom company IDs, "
               "OUIs, name terms and new categories (check it with --check-config)."),
@@ -8488,7 +9425,7 @@ def tutorial_pages() -> list:
         ("p", "When you quit, a SESSION COMPLETE screen recaps the session: time online, devices seen, packets, XP earned, level, streak, Intel Coins, "
               "quests / bounties / missions done and the milestones you hit, with the shutdown sound. A key press finishes the reveal, the next closes it."),
         ("s",), ("h", "Files it creates"),
-        ("k", "settings", "lookout_settings.json: signal filter, effects, notify sound, auto-tactical, supporter."),
+        ("k", "settings", "lookout_settings.json: signal filter, effects, notify sound, auto-tactical, boot, classic, supporter (all editable with the , key)."),
         ("k", "profile", "lookout_profile.json: your level, XP, quests, achievements and streak."),
         ("k", "known", "lookout_known.json: renames, ignores, trusted trackers, watchlist."),
         ("k", "report", "session_logs/*.html: a full session report written when you quit."),
@@ -8578,6 +9515,394 @@ def tutorial_nav(ch: str):
         TUT["scroll"] = max(0, TUT["scroll"] - 1)
     elif len(ch) == 1 and ch.isdigit() and 1 <= int(ch) <= n:
         TUT["page"], TUT["scroll"] = int(ch) - 1, 0
+
+# =============================================================================
+# SETTINGS SCREEN  (key ,)
+# Page 1 holds everything saved in lookout_settings.json; the other pages edit lookout_game.json (boot, level curve,
+# XP, Intel Coins, daily hooks). The app rows reuse the same state and save_settings() as the single-key shortcuts
+# (a, z, o, n, u, k, [ ] l, $, b). The game rows write the value into lookout_game.json (everything else in that file,
+# including quests and your comments in _readme, is kept as it is) and reload it at once.
+# Keys: ↑/↓ select, ←/→ or Space change, Enter type a value, Tab / [ ] / 1-6 switch page, Esc or , close.
+# =============================================================================
+SETTINGS_PAGES = ["General", "Startup", "Progression", "XP", "Coins", "Daily hooks"]
+SETTINGS_UI = {"page": 0, "sels": [0] * len(SETTINGS_PAGES), "backed_up": False}
+
+def _app(page, key, label, desc, note=""):
+    return {"key": key, "page": page, "label": label, "desc": desc, "note": note, "game": False}
+
+def _g(page, path, label, desc, kind, lo=None, hi=None, step=None, note=""):
+    if not note and lo is not None and hi is not None and kind in ("int", "num", "float"):
+        note = f"{lo:g}–{hi:g}"
+    return {"key": "g:" + ".".join(path), "page": page, "path": tuple(path), "label": label, "desc": desc, "kind": kind,
+            "lo": lo, "hi": hi, "step": step, "note": note, "game": True}
+
+_STATIC_ROWS = [
+    _app(0, "min_rssi", "Signal filter", "Hide devices whose smoothed signal is weaker than this. ←/→ steps Off / -90 / -80 / -70 / -60 / -50 dBm; Enter types an exact value (keys [ ] l)."),
+    _app(0, "rssi_bypass", "Alerts bypass filter", "Alerts, known devices and the hunted device ignore the signal filter (key a)."),
+    _app(0, "fx", "Visual effects", "Celebration cards, new-device flash, alert pulse, radar sweep, hunt sonar, heartbeat and XP shimmer. Sounds keep playing when off (key z)."),
+    _app(0, "crt", "CRT scanlines", "Dim every second row with a slow rolling refresh band (key o)."),
+    _app(0, "notify", "New-device sound", "Sound played when a new device is found: notify, notify2, notify3 or off. Changing it plays a preview (key n)."),
+    _app(0, "auto_tactical", "Auto tactical view", "Jump to the Tactical view whenever a new alert/possible tactical device is found (key u)."),
+    _app(0, "classic", "Classic Bluetooth", "Also discover classic (BR/EDR) devices: older speakers, car stereos, headsets. Linux / BlueZ only (key k).", "Linux only"),
+    _app(0, "supporter", "Supporter status", "Honor-system supporter badge (sparkling name, gold profile badge). Enter opens the support screen to activate it (key $)."),
+    # ---- Startup
+    _app(1, "boot", "Boot sequence", "Play the fake startup sequence at launch (lookout_settings.json). It is skipped when visual effects are off. The game file's own boot switch below must be on too.", "next launch"),
+    _app(1, "boot_sound", "Boot intro sound", "Let the boot sequence play the intro sound. The game file's 'plays intro' switch below must be on too.", "next launch"),
+    _app(1, "tutorial", "Guide on next launch", "Open the guide the next time the scanner starts (it marks itself as seen again after that).", "next launch"),
+    _g(1, ("boot", "enabled"), "Boot enabled (game file)", "Second switch for the startup sequence, in lookout_game.json. Both this and the boot sequence switch above must be on.", "bool", note="next launch"),
+    _g(1, ("boot", "speed"), "Boot speed", "How fast the startup sequence plays. x1 is normal, x2 takes half the time, x0.25 is four times slower. Any key still skips it.", "float", 0.25, 4.0, 0.25, note="0.25–4, next launch"),
+    _g(1, ("boot", "banner"), "Boot banner text", "Big text shown when the sequence finishes (up to 24 characters, shown in capitals). Enter to type.", "str", 1, 24, note="next launch"),
+    _g(1, ("boot", "play_intro"), "Boot plays intro (game file)", "Play the intro sound during boot. The Boot intro sound switch above must be on too.", "bool", note="next launch"),
+    _g(1, ("settings", "notify_startup_delay"), "Celebration hold at launch", "Seconds after launch before celebration cards and their sounds start, so the first burst of finds doesn't spam you. 0 = no wait.", "num", 0, 600, 5, note="0–600 s"),
+    # ---- Progression
+    _g(2, ("settings", "daily_quest_count"), "Daily quests", "How many daily quests you get each day.", "int", 0, 10, 1),
+    _g(2, ("settings", "day_rollover_hour"), "Day rollover hour", "The hour (0-23, local time) when a new game day starts for quests and streaks.", "int", 0, 23, 1),
+    _g(2, ("settings", "level_cap"), "Level cap", "Highest reachable level.", "int", 2, 200, 5),
+    _g(2, ("settings", "level_base_xp"), "Level base XP", "XP cost of level 2, before the growth and multiplier below.", "num", 1, 1e6, 10),
+    _g(2, ("settings", "level_growth"), "Level growth", "Each level costs this much more than the one before (1.045 = 4.5% more).", "float", 1.0, 1.5, 0.005),
+    _g(2, ("settings", "level_xp_multiplier"), "Level XP multiplier", "Scales every level's cost. Lower = faster levelling.", "float", 0.1, 1000, 0.5),
+    _g(2, ("settings", "achievement_target_multiplier"), "Achievement target x", "Scales how much every achievement asks of you (1 = as written, 2 = double).", "float", 0.1, 1000, 0.5),
+    _g(2, ("settings", "bounty_count_multiplier"), "Bounty count x", "Scales how many matches every bounty needs.", "float", 0.1, 1000, 0.5),
+    _g(2, ("settings", "streak_min_scan_minutes"), "Streak minutes per day", "Minutes you must scan in a day for it to count toward your streak.", "num", 0, 1440, 5),
+    _g(2, ("settings", "streak_bonus_xp"), "Streak bonus XP", "Extra XP per streak day, paid on top of other XP.", "int", 0, 1e5, 5),
+    _g(2, ("settings", "streak_bonus_cap"), "Streak bonus cap (days)", "The streak bonus stops growing after this many days.", "int", 1, 365, 1),
+    # ---- Coins (the per-event rules and caps are added below, from the loaded config)
+    _g(4, ("settings", "coin_icon"), "Coin icon", "The symbol shown next to Intel Coins (up to 4 characters). Enter to type.", "str", 1, 4),
+    _g(4, ("settings", "quest_xp_per_coin"), "Quest XP per coin", "A quest pays one bonus coin for every this much XP it gives.", "num", 0.1, 1e6, 5),
+    _g(4, ("settings", "achievement_xp_per_coin"), "Achievement XP per coin", "An achievement pays one bonus coin for every this much XP it gives.", "num", 0.1, 1e6, 5),
+    _g(4, ("settings", "streak_xp_per_coin"), "Streak XP per coin", "Streak bonus XP converts to coins at this rate.", "num", 0.1, 1e6, 5),
+    _g(4, ("settings", "devices_per_coin"), "Devices per coin", "One coin for every this many new devices (see Coins · device_batch). 0 turns it off.", "num", 0, 1e6, 10),
+    # ---- Daily hooks
+    _g(5, ("retention", "surge", "enabled"), "Daily Surge", "Bonus XP in your first minutes of scanning each day.", "bool"),
+    _g(5, ("retention", "surge", "minutes"), "Surge minutes", "How many minutes of scanning the Daily Surge lasts.", "num", 1, 600, 5),
+    _g(5, ("retention", "surge", "multiplier"), "Surge multiplier", "XP multiplier during the Daily Surge.", "float", 1.0, 10.0, 0.25),
+    _g(5, ("retention", "streak_ladder"), "Streak coin ladder", "Coins paid on each streak day, repeating after the last entry. Enter to type, e.g. 2,2,3,3,4,5,10 (up to 31 numbers).", "list"),
+    _g(5, ("retention", "shield", "max"), "Streak Shields held", "Most Streak Shields you can hold (each covers one missed day).", "int", 0, 10, 1),
+    _g(5, ("retention", "shield", "free_every"), "Free shield every (days)", "A free Streak Shield every this many streak days. 0 = never.", "int", 0, 365, 1),
+    _g(5, ("retention", "comeback", "min_days_away"), "Welcome Back after (days)", "Days away before the Welcome Back bonus appears. 0 = off.", "int", 0, 365, 1),
+    _g(5, ("retention", "comeback", "xp"), "Welcome Back XP", "XP paid by the Welcome Back bonus.", "int", 0, 1e5, 10),
+    _g(5, ("retention", "comeback", "coins"), "Welcome Back coins", "Intel Coins paid by the Welcome Back bonus.", "int", 0, 1e4, 1),
+    _g(5, ("retention", "weekly_count"), "Weekly ops per week", "How many weekly goals are picked each Monday. 0 = none.", "int", 0, 8, 1),
+    _g(5, ("retention", "weekly_chest", "enabled"), "Weekly Chest", "The chest opened when every weekly op is done.", "bool"),
+]
+
+def _event_rows(page, block, caps_block, events, defaults, tag, unit):
+    rules, caps = GCFG.get(block) or {}, GCFG.get(caps_block) or {}
+    rows = [_g(page, (block, k), f"{tag} · {k}", f"{unit} paid for: {events.get(k, k)}.", "int", 0, 1e6) for k in rules]
+    keys = list(dict.fromkeys(list(events) + list(defaults) + list(caps)))      # every event can be capped, so the rows never come and go
+    rows += [_g(page, (caps_block, k), f"{tag} cap · {k}",
+                f"Daily limit on {unit.lower()} from: {events.get(k, k)}. ←/→ change; Enter types a number, or 'off' for no limit.",
+                "cap", 0, 1e6, note="per day") for k in keys]
+    return rows
+
+def settings_rows(page: int) -> list:
+    rows = [r for r in _STATIC_ROWS if r["page"] == page]
+    if page == 3:
+        rows = _event_rows(3, "xp_rules", "xp_caps", GAME_XP_EVENTS, GAME_DEFAULT_CAPS, "XP", "XP")
+    elif page == 4:
+        rows += _event_rows(4, "coin_rules", "coin_caps", GAME_COIN_EVENTS, GAME_DEFAULT_COIN_CAPS, "Coins", "Coins")
+    return rows
+
+def settings_game_ok() -> str:
+    """'' when the game file can be edited, otherwise the reason it can't."""
+    if not GAME["on"]:
+        return "The game layer is off (--no-game), so game settings can't be changed."
+    if not os.path.exists(GAME["cfg_path"]):
+        return f"{GAME['cfg_path']} was not found, so game settings can't be changed."
+    return ""
+
+def game_cfg_get(path):
+    cur = GCFG
+    for k in path:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return cur
+
+def game_cfg_edit(path, value) -> str:
+    """Write one value into the game config file (keeping everything else), then reload it. Returns '' or an error message."""
+    p = GAME["cfg_path"]
+    try:
+        with open(p, encoding="utf-8") as f:
+            raw = f.read()
+        data = json.loads(raw)
+    except (OSError, ValueError) as e:
+        return f"Could not read {p} ({e}); nothing changed."
+    if not isinstance(data, dict):
+        return f"{p} is not a JSON object; nothing changed."
+    canon = json.dumps(data, indent=2, ensure_ascii=False)
+    if raw.strip() != canon and not SETTINGS_UI["backed_up"]:       # the file is laid out differently from what we write: keep a copy once
+        try:
+            import shutil
+            shutil.copyfile(p, p + ".bak")
+        except OSError:
+            pass
+        SETTINGS_UI["backed_up"] = True
+    d = data
+    for k in path[:-1]:
+        nxt = d.get(k)
+        if not isinstance(nxt, dict):
+            nxt = d[k] = {}
+        d = nxt
+    d[path[-1]] = value
+    try:
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2, ensure_ascii=False) + ("\n" if raw.endswith("\n") else ""))
+        os.replace(tmp, p)
+    except OSError as e:
+        return f"Could not write {p} ({e}); nothing changed."
+    err = game_load_config()
+    try:
+        game_sync_quests()
+    except Exception:
+        pass
+    return err
+
+def fmt_game_value(row, v) -> str:
+    kind = row["kind"]
+    if v is None:
+        return "no limit" if kind == "cap" else "—"
+    if kind == "bool":
+        return "ON" if v else "OFF"
+    if kind == "list":
+        return ",".join(f"{x:g}" if isinstance(x, (int, float)) else str(x) for x in v)
+    if row["path"] == ("boot", "speed"):
+        return f"x{v:g}"
+    if isinstance(v, float) or isinstance(v, int) and not isinstance(v, bool):
+        return f"{v:g}" if abs(v) < 1e15 else str(v)
+    return str(v)
+
+def settings_value(row) -> "Text":
+    def onoff(v):
+        return Text("● ON", style="bold green") if v else Text("○ OFF", style="dim")
+    if row["game"]:
+        if settings_game_ok():
+            return Text("n/a", style="dim")
+        v = game_cfg_get(row["path"])
+        if row["kind"] == "bool":
+            return onoff(v)
+        return Text(fmt_game_value(row, v), style="dim" if v is None else "bold yellow")
+    key = row["key"]
+    if key == "min_rssi":
+        v = CFG["min_rssi"]
+        return Text("OFF", style="dim") if v is None else Text(f"≥ {v} dBm", style="bold yellow")
+    if key == "notify":
+        snd = NOTIFY_SOUNDS[NOTIFY["idx"]][0]
+        return Text(snd, style="bold cyan") if snd else Text("OFF", style="dim")
+    if key == "tutorial":
+        return onoff(not TUT["seen"])
+    if key == "supporter":
+        return Text("★ ACTIVE", style="bold gold1") if SUPPORT["on"] else Text("not active", style="dim")
+    return onoff(CFG[key])
+
+def build_settings_panel(size):
+    W, H = size
+    page = SETTINGS_UI["page"] % len(SETTINGS_PAGES)
+    rows = settings_rows(page)
+    n = len(rows)
+    sel = SETTINGS_UI["sels"][page] = max(0, min(SETTINGS_UI["sels"][page], n - 1))
+    tabs = Text(no_wrap=True, overflow="ellipsis")
+    if W >= 80:
+        for i, nm in enumerate(SETTINGS_PAGES):
+            tabs.append(f" {i + 1} {nm} ", style="reverse bold" if i == page else "dim")
+            tabs.append(" ")
+    else:
+        tabs.append(f" {page + 1}/{len(SETTINGS_PAGES)} {SETTINGS_PAGES[page]} ", style="reverse bold")
+    fit = max(3, min(n, H - 9))                                # borders, tab line, two blank lines and a two-line description
+    top = max(0, min(sel - fit // 2, n - fit))
+    table = Table(box=None, show_header=False, expand=True, padding=(0, 1))
+    table.add_column(width=1, no_wrap=True)
+    table.add_column(width=30, no_wrap=True, overflow="ellipsis")
+    table.add_column(width=14, no_wrap=True, overflow="ellipsis")
+    table.add_column(ratio=1, no_wrap=True, overflow="ellipsis", style="dim")
+    for i in range(top, min(n, top + fit)):
+        r = rows[i]
+        cur = i == sel
+        table.add_row(Text("▶" if cur else " ", style="bold yellow"), Text(r["label"], style="bold bright_white" if cur else ""),
+                      settings_value(r), r["note"], style="on grey23" if cur else None)
+    desc = Text(rows[sel]["desc"], style="cyan")
+    if rows[sel]["game"] and settings_game_ok():
+        desc = Text(settings_game_ok(), style="yellow")
+    sub = "↑/↓ select · ←/→ or Space change · Enter type · Tab or 1-6 page · Esc or , close"
+    if top > 0 or top + fit < n:
+        sub += f" · {sel + 1}/{n}"
+    return Panel(Group(tabs, Text(""), table, Text(""), desc), title="[bold]⚙ Settings (Press ',' to return)[/]", title_align="left",
+                 subtitle=sub, border_style="yellow", box=ROUNDED)
+
+def settings_toggle():
+    if CFG["show_settings"]:
+        toggle_overlay("settings")
+    else:
+        open_overlay("settings")
+
+def settings_step(row, cur, d: int):
+    """The value after one ←/→ press (d = +1 / -1), kept inside the allowed range. None means 'switch the limit off'."""
+    kind, lo, hi, step = row["kind"], row["lo"], row["hi"], row["step"]
+    if kind == "cap":
+        if cur is None:
+            return int(GAME_DEFAULT_CAPS.get(row["path"][-1], GAME_DEFAULT_COIN_CAPS.get(row["path"][-1], 100))) if d > 0 else None
+        s = step or auto_step(cur)
+        return None if d < 0 and cur <= s else int(min(hi, cur + d * s))
+    cur = lo if cur is None else cur
+    s = step or auto_step(cur)
+    new = max(lo, min(hi, round(cur + d * s, 6)))
+    return int(round(new)) if kind == "int" else (int(new) if kind == "num" and float(new).is_integer() else float(new))
+
+def auto_step(v) -> float:
+    v = abs(v)
+    for lim, s in ((20, 1), (100, 5), (500, 10), (2000, 50), (10000, 100), (100000, 500)):
+        if v < lim:
+            return s
+    return 5000
+
+def settings_parse(row, raw: str):
+    """Typed text -> (value, error). Out-of-range numbers are refused instead of silently clamped."""
+    kind, lo, hi = row["kind"], row["lo"], row["hi"]
+    raw = raw.strip()
+    if kind == "cap" and raw.lower() in ("off", "none", "no", "-"):
+        return None, ""
+    if kind == "str":
+        return raw[:int(hi)], ""
+    if kind == "list":
+        try:
+            vals = [int(x) for x in raw.replace(" ", "").split(",") if x != ""]
+        except ValueError:
+            return None, "Use whole numbers separated by commas, e.g. 2,2,3,3,4,5,10."
+        if not vals or len(vals) > 31 or any(not 0 <= v <= 10000 for v in vals):
+            return None, "Use 1 to 31 numbers between 0 and 10000, separated by commas."
+        return vals, ""
+    try:
+        x = float(raw)
+    except ValueError:
+        return None, f"'{raw}' is not a number. Nothing changed."
+    if not (lo <= x <= hi):
+        return None, f"Use a value from {lo:g} to {hi:g}. Nothing changed."
+    if kind in ("int", "cap"):
+        return int(round(x)), ""
+    if kind == "num":
+        return (int(x) if x.is_integer() else x), ""
+    return float(x), ""
+
+def settings_game_apply(row, d: int, live, enter: bool) -> str:
+    why = settings_game_ok()
+    if why:
+        return why
+    path, kind, label = row["path"], row["kind"], row["label"]
+    cur = game_cfg_get(path)
+    if kind == "bool":
+        new = not bool(cur)
+    elif enter:
+        hint = {"str": "text", "list": "numbers separated by commas", "cap": "a number, or off for no limit"}.get(kind)
+        if hint is None:
+            hint = f"{row['lo']:g} to {row['hi']:g}"
+        live.stop()
+        sys.stdout.write("\033[H\033[J")
+        with line_mode():
+            raw = ask(f"{label} (now {fmt_game_value(row, cur)}; {hint}; blank = keep): ")
+        reset_tick()
+        live.start()
+        if not raw:
+            return f"{label} unchanged."
+        new, err = settings_parse(row, raw)
+        if err:
+            return err
+    elif kind in ("str", "list"):
+        return "Press Enter to type a new value."
+    else:
+        new = settings_step(row, cur, d)
+        if new == cur:
+            return f"{label}: {fmt_game_value(row, cur)} (limit reached)"
+    err = game_cfg_edit(path, new)
+    if err:
+        return err
+    shown = fmt_game_value(row, game_cfg_get(path))
+    return f"{label}: {shown}" + (" (applies next launch)" if row["path"][0] == "boot" else "")
+
+async def settings_apply(row, d: int, live, enter: bool = False):
+    """Change one setting. d is +1 / -1 (direction for cycling rows); enter=True means the Enter key (rows that ask for typed input)."""
+    if row["game"]:
+        STATUS.set(settings_game_apply(row, d, live, enter))
+        return
+    key, label = row["key"], row["label"]
+    if key == "min_rssi":
+        if enter:
+            live.stop()
+            sys.stdout.write("\033[H\033[J")
+            with line_mode():
+                cur = "off" if CFG["min_rssi"] is None else f"{CFG['min_rssi']}"
+                raw = ask(f"Minimum signal in dBm (now {cur}; e.g. -75, 0 = off, blank = keep): ")
+            STATUS.set(apply_signal_input(raw) if raw else "Signal filter unchanged.")
+            reset_tick()
+            live.start()
+        else:
+            step_min_rssi(d)
+    elif key in ("rssi_bypass", "fx", "crt", "auto_tactical", "boot", "boot_sound"):
+        CFG[key] = not CFG[key]
+        if key == "auto_tactical":
+            AUTO["pending"] = None
+        save_settings()
+        note = " (applies next launch)" if key in ("boot", "boot_sound") else ""
+        if key == "boot" and CFG["boot"] and not CFG["fx"]:
+            note += " (boot is skipped while visual effects are off)"
+        STATUS.set(f"{label}: {'ON' if CFG[key] else 'OFF'}{note}")
+    elif key == "notify":
+        NOTIFY["idx"] = (NOTIFY["idx"] + (d or 1)) % len(NOTIFY_SOUNDS)
+        save_settings()
+        snd, name = NOTIFY_SOUNDS[NOTIFY["idx"]]
+        STATUS.set(f"New-device sound: {name}" if snd else "New-device sound: OFF")
+        if snd:
+            play_notification_sound(snd)                       # preview
+    elif key == "classic":
+        STATUS.set("Starting classic Bluetooth discovery..." if not CLASSIC["on"] else "Stopping classic discovery...")
+        STATUS.set(await classic_toggle())
+    elif key == "tutorial":
+        TUT["seen"] = not TUT["seen"]
+        save_settings()
+        STATUS.set("The guide will open on the next launch." if not TUT["seen"] else "The guide will stay closed on the next launch.")
+    elif key == "supporter":
+        if enter:
+            live.stop()
+            with line_mode():
+                STATUS.set(donate_flow())
+            reset_tick()
+            live.start()
+        else:
+            STATUS.set("Supporter status is activated from the support screen: press Enter on this row.")
+
+def settings_goto(page: int):
+    SETTINGS_UI["page"] = page % len(SETTINGS_PAGES)
+    STATUS.set(f"Settings: {SETTINGS_PAGES[SETTINGS_UI['page']]}")
+
+async def settings_key(ch: str, live) -> bool:
+    """Keys while the settings screen is open. Returns True when the key was used (anything else falls through, so q still quits)."""
+    page = SETTINGS_UI["page"] = SETTINGS_UI["page"] % len(SETTINGS_PAGES)
+    rows = settings_rows(page)
+    n = len(rows)
+    sel = SETTINGS_UI["sels"][page] = max(0, min(SETTINGS_UI["sels"][page], n - 1))
+    row = rows[sel]
+    if ch in ("UP", "k", "K"):
+        SETTINGS_UI["sels"][page] = (sel - 1) % n
+    elif ch in ("DOWN", "j", "J"):
+        SETTINGS_UI["sels"][page] = (sel + 1) % n
+    elif ch in ("\t", "]"):
+        settings_goto(page + 1)
+    elif ch == "[":
+        settings_goto(page - 1)
+    elif len(ch) == 1 and ch.isdigit() and 1 <= int(ch) <= len(SETTINGS_PAGES):
+        settings_goto(int(ch) - 1)
+    elif ch in ("LEFT", "RIGHT"):
+        await settings_apply(row, 1 if ch == "RIGHT" else -1, live)
+    elif ch in ("\r", "\n"):
+        await settings_apply(row, 1, live, enter=True)
+    elif ch == " " and not FX["cur"]:                          # (while a celebration card is up, Space still skips it)
+        await settings_apply(row, 1, live)
+    elif ch in ("\x1b", ","):                                  # Esc closes the screen here instead of quitting
+        settings_toggle()
+        STATUS.set("Closed settings")
+    else:
+        return False
+    return True
 
 def donate_flow() -> str:
     """Support the developer: explain, ask for agreement, show the PayPal link and the unlock code, then activate (honor system)."""
@@ -8700,8 +10025,8 @@ def main():
     p.add_argument("--no-outro", action="store_true", help="skip the SESSION COMPLETE recap screen when you quit")
     p.add_argument("--test-outro", action="store_true", help="preview the SESSION COMPLETE recap screen with the current profile, then exit")
     p.add_argument("--classic", action="store_true", help="also discover classic Bluetooth (BR/EDR) devices (Linux/BlueZ; key k toggles it while running)")
-    p.add_argument("--adapter", default="hci1", metavar="HCIn",
-                   help="Bluetooth adapter to scan with (Linux/BlueZ), e.g. hci0. Default: hci1")
+    p.add_argument("--adapter", default="auto", metavar="HCIn",
+                   help="Bluetooth adapter to scan with (Linux/BlueZ), e.g. hci0. Default: auto (hci1 if present, else the first adapter found, else hci0)")
     p.add_argument("--view", default="proximity", metavar="NAME",
                    help="view to open at startup: grid, top5, compact, tactical, security, proximity, radar, arrivals, stats, ghosts, known, "
                         "or cat:<category> (default: proximity)")
@@ -8716,13 +10041,31 @@ def main():
     gp.add_argument("--profile", default=PROFILE_FILE, metavar="FILE", help="where player progress is saved (default: lookout_profile.json)")
     gp.add_argument("--player", metavar="NAME", help="set your player name")
     gp.add_argument("--check-game", action="store_true", help="validate the game config, list usable metrics, then exit")
+    ap = p.add_argument_group("device album")
+    ap.add_argument("--no-album", action="store_true", help="turn off the device album (the collection of every device model you discover)")
+    ap.add_argument("--album", default=ALBUM_FILE, metavar="FILE", help="where the album is saved (default: lookout_album.json next to the script)")
+    ap.add_argument("--album-sensitive", action="store_true", help="also collect medical and assistive devices (insulin pumps, glucose monitors, hearing aids, wheelchairs); skipped by default for privacy")
+    ap.add_argument("--album-stats", action="store_true", help="print a summary of your album, then exit")
     p.add_argument("--check-config", action="store_true", help="validate the config (categories, regexes, colours), print a summary, then exit")
     args = p.parse_args()
+    global SETTINGS_FILE
+    here = Path(__file__).resolve().parent
+    def anchor(val, default):            # a default file name lives next to the script, so progress doesn't depend on the launch folder
+        return str(here / val) if val == default and not Path(val).exists() else val
+    args.known = anchor(args.known, KNOWN_FILE)
+    args.game_config = anchor(args.game_config, GAME_CONFIG_FILE)
+    args.profile = anchor(args.profile, PROFILE_FILE)
+    args.album = anchor(args.album, ALBUM_FILE)
+    args.report_dir = anchor(args.report_dir, REPORT_DIR)
+    SETTINGS_FILE = anchor(SETTINGS_FILE, "lookout_settings.json")
 
     if args.update_db:
         return update_db()
     if args.check_game:
         sys.exit(check_game_config(args.game_config))
+    if args.album_stats:
+        print(album_stats_text(args.album))
+        return
     if args.check_config:
         print(f"[+] Config: {load_config(args.config)}")
         print("[+] Dashboard categories: " + ", ".join(c[0] for c in CATEGORIES))
@@ -8733,6 +10076,8 @@ def main():
         return
     if bleak is None or not HAVE_RICH:
         sys.exit("Missing dependencies. Install with:  pip install bleak rich")
+    if args.adapter == "auto":
+        args.adapter = pick_adapter()
     if not re.fullmatch(r"hci\d+", args.adapter):
         sys.exit("--adapter must look like hci0, hci1, ...")
     ADAPTER["name"] = args.adapter
@@ -8787,6 +10132,11 @@ def main():
         game_session_start()
         print(f"[+] Player {STATE['name']}: level {game_level()}, {len(GCFG['quests'])} quests / {len(GCFG['bounties'])} bounties / "
               f"{len(GCFG['achievements'])} achievements / {len(GCFG['titles'])} titles")
+    if not args.no_album:
+        for w in album_init(args.album, args.album_sensitive):
+            print(f"[!] Album: {w}")
+        print(f"[+] Album: {len(ALBUM['data']['models'])} models over {ALBUM['data']['sessions']} session(s)"
+              + (" (medical / assistive models included)" if args.album_sensitive else ""))
     if args.test_fx:
         FX["hold_until"], FX["max_burst"] = 0.0, 99          # preview everything right away, uncollapsed
         game_fx("level", "New rank: Scout", "1,250 total XP", "", big2="7")
@@ -8821,6 +10171,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        album_save(force=True)
         game_save(force=True)                              # saved first, so nothing is lost if the recap screen is interrupted
         if outro_wanted(args.no_outro):
             try:

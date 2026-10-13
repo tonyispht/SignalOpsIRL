@@ -43,7 +43,7 @@
     "daily_login": 15
   },
   "xp_caps": {
-    "new_device": 15150,
+    "new_device": null,
     "follower_alert": 15150,
     "hunt_completed": 15300,
     "rotation_linked": 1560,
@@ -3751,7 +3751,7 @@
       "free_every": 7
     },
     "comeback": {
-      "min_days_away": 3,
+      "min_days_away": 1,
       "xp": 100,
       "coins": 10
     },
